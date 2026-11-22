@@ -64,6 +64,7 @@ class RuleExecutionConfig {
     required this.searchName,
     required this.searchResult,
     this.searchCover = '',
+    this.chapterDrop = '',
     required this.chapterRoads,
     required this.chapterResult,
     this.chapterContent = '',
@@ -90,6 +91,9 @@ class RuleExecutionConfig {
 
   /// 小说扩展：章节正文的 XPath（空串 = 该规则不提供正文）。
   final String chapterContent;
+
+  /// 正文里要丢掉的噪声节点（XPath，`|` 可组合）。空串表示不丢。
+  final String chapterDrop;
   final ApiSearchConfig searchApiConfig;
   final ApiChapterConfig chapterApiConfig;
   final AntiCrawlerConfig antiCrawlerConfig;
