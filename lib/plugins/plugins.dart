@@ -55,6 +55,15 @@ class Plugin {
   /// 并提示用户补选择器 —— 而不是直接报错，因为整页文本至少能读。
   String chapterContent;
 
+  /// 小说扩展：正文里要**丢掉**的噪声节点（XPath，可用 `|` 组合多条）。
+  ///
+  /// 小说站的正文容器里常混着站点声明、广告位、"本文来自 XXX"这类固定文案。
+  /// 它们不影响可读性，但每章开头都顶着一行广告很脏。放这里而不是在
+  /// 抽取器里写死，是因为不同站点的噪声结构完全不同。
+  ///
+  /// 空串表示不丢任何节点。
+  String chapterDrop;
+
   /// 小说扩展：目录页的路径后缀。
   ///
   /// 有些站点的详情页**不含**章节目录，目录在另一个 URL 上。linovelib 就是
@@ -116,6 +125,7 @@ class Plugin {
     required this.chapterRoads,
     required this.chapterResult,
     this.chapterContent = '',
+    this.chapterDrop = '',
     this.chapterCatalog = '',
     this.novelIndexAsset = '',
     this.catalogTemplate = '',
@@ -156,6 +166,7 @@ class Plugin {
       chapterRoads: json['chapterRoads'] as String? ?? '',
       chapterResult: json['chapterResult'] as String? ?? '',
       chapterContent: json['chapterContent'] as String? ?? '',
+      chapterDrop: json['chapterDrop'] as String? ?? '',
       chapterCatalog: json['chapterCatalog'] as String? ?? '',
       novelIndexAsset: json['novelIndexAsset'] as String? ?? '',
       catalogTemplate: json['catalogTemplate'] as String? ?? '',
@@ -248,6 +259,7 @@ class Plugin {
       // 只在非空时写出：老规则 JSON 不该被塞一个空字段，
       // 否则导出/再导入会多出一堆无意义的键。
       if (chapterContent.isNotEmpty) 'chapterContent': chapterContent,
+      if (chapterDrop.isNotEmpty) 'chapterDrop': chapterDrop,
       if (chapterCatalog.isNotEmpty) 'chapterCatalog': chapterCatalog,
       if (novelIndexAsset.isNotEmpty) 'novelIndexAsset': novelIndexAsset,
       if (catalogTemplate.isNotEmpty) 'catalogTemplate': catalogTemplate,
@@ -386,6 +398,7 @@ class Plugin {
       chapterRoads: chapterRoads,
       chapterResult: chapterResult,
       chapterContent: chapterContent,
+      chapterDrop: chapterDrop,
       chapterCatalog: chapterCatalog,
       novelIndexAsset: novelIndexAsset,
       catalogTemplate: catalogTemplate,
