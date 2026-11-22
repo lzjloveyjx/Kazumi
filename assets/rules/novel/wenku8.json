@@ -2,7 +2,7 @@
   "api": "9",
   "type": "novel",
   "name": "wenku8",
-  "version": "1.1",
+  "version": "1.2",
   "muliSources": true,
   "useWebview": false,
   "useNativePlayer": false,
@@ -19,6 +19,7 @@
   "chapterRoads": "//table[contains(@class,'css')]",
   "chapterResult": "//a[contains(@href,'.htm')]",
   "chapterContent": "//div[@id='content']",
+  "chapterDrop": "//ul[@id='contentdp']",
   "chapterCatalog": "/index.htm",
   "referer": "https://www.wenku8.cc",
   "antiCrawlerConfig": {
