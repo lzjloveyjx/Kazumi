@@ -49,7 +49,7 @@ class NovelLocalIndex {
   ///
   /// 只做子串匹配而不打分排序：中文书名短、关键词通常很具体，包含关系
   /// 已经足够准。名字里带关键词的排在作者命中的前面。
-  List<SearchItem> search(String keyword, Plugin plugin, {int limit = 60}) {
+  List<SearchItem> search(String keyword, Plugin plugin, {int limit = 120}) {
     final k = keyword.trim().toLowerCase();
     if (k.isEmpty) return const <SearchItem>[];
     final byName = <SearchItem>[];
@@ -65,14 +65,16 @@ class NovelLocalIndex {
     return [...byName, ...byAuthor].take(limit).toList(growable: false);
   }
 
-  /// 首页榜单：索引本身就是全站书目，按 aid 顺序取前 [limit] 本。
+  /// 首屏书目：索引本身就是全站书目，按 aid 顺序排列。
   ///
   /// aid 越小入库越早 —— 文库的老书都是经典（文学少女、魔法禁书目录…），
-  /// 作为「进 tab 就能看到书」的默认列表比随机取更合理。
-  List<SearchItem> browse(Plugin plugin, {int limit = 60}) {
-    return _entries.take(limit).map((e) => _toItem(e, plugin)).toList(
-      growable: false,
-    );
+  /// 排在最前面正好当「进 tab 就能看到书」的默认列表。
+  ///
+  /// [limit] 为 null 时返回全部（4300+ 本）。网格是懒构建的，一次给全量不会
+  /// 卡；给个固定上限反而会让用户以为「就这么点书」。
+  List<SearchItem> browse(Plugin plugin, {int? limit}) {
+    final source = limit == null ? _entries : _entries.take(limit);
+    return source.map((e) => _toItem(e, plugin)).toList(growable: false);
   }
 
   SearchItem _toItem(_IndexEntry e, Plugin plugin) {
