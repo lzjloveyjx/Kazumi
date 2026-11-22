@@ -43,7 +43,6 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
   ///
   /// 复用动漫侧同一份实现 —— 抽到了 services/plugin/captcha_flow.dart。
   late final CaptchaFlow _captchaFlow;
-  String _pendingKeyword = '';
 
   @override
   void initState() {
@@ -84,7 +83,6 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
       _error = '';
       _results = const <SearchItem>[];
     });
-    _pendingKeyword = keyword;
     try {
       final response = await plugin.queryBangumi(keyword);
       if (mounted) setState(() => _results = response.data);
