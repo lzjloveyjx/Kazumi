@@ -116,7 +116,33 @@ abstract class _PluginsController with Store {
     } else {
       await _migrateLegacyPlugins(legacyDirectory);
     }
+    await _purgeRemovedBundledRules();
     await _seedBundledNovelRules();
+  }
+
+
+  /// 曾经随包内置、后来决定不再提供的规则。
+  ///
+  /// 只在启动时清理一次：老版本装过 linovelib 的用户，升级后 plugins.json 里
+  /// 还留着它，光把它从 bundled 列表里去掉是删不掉的 —— 用户会在源列表里
+  /// 看到一个「搜索必弹验证码」的残留源。这里主动移除。
+  ///
+  /// 用「按名字精确移除 + 只在列表里存在时才写盘」的方式，避免每次启动都
+  /// 重写一遍 plugins.json。
+  Future<void> _purgeRemovedBundledRules() async {
+    const removed = <String>['linovelib'];
+    final before = pluginList.length;
+    pluginList.removeWhere(
+      (plugin) => removed.any(
+        (name) => pluginNameKey(name) == pluginNameKey(plugin.name),
+      ),
+    );
+    if (pluginList.length != before) {
+      await _savePlugins();
+      KazumiLogger().i(
+        'Plugin: purged retired bundled rule(s): ${before - pluginList.length}',
+      );
+    }
   }
 
   /// 随包内置的小说规则（assets/rules/novel/*.json）。
@@ -128,7 +154,10 @@ abstract class _PluginsController with Store {
   /// 只在「同名规则还没装」时写入，所以用户自己删掉之后不会每次启动又冒出来
   /// —— 除非他清空全部数据重来，那种情况下重新种一遍是合理的。
   Future<void> _seedBundledNovelRules() async {
-    const bundled = <String>['linovelib'];
+    // 只随包带 wenku8：它书页/目录/正文全部免登录，配合随包书目索引
+    // 能搜到全站 4300+ 本，不需要账号也不需要验证码。
+    // linovelib 已移除（搜索要人工过验证码，体验不如 wenku8 干净）。
+    const bundled = <String>['wenku8'];
     final installed = {
       for (final plugin in pluginList) pluginNameKey(plugin.name),
     };
