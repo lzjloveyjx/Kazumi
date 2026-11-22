@@ -135,7 +135,24 @@ class XPathRuleStrategy {
           diagnostics.add('搜索节点 $index 缺少名称或来源，已跳过');
           continue;
         }
-        items.add(SearchItem(name: name, src: source));
+        // 封面（可选）：规则没写 searchCover 时跳过，不报错。
+        var cover = '';
+        if (config.searchCover.trim().isNotEmpty) {
+          try {
+            final img = node.queryXPath(config.searchCover).node;
+            if (img != null) {
+              // 懒加载站点的真地址在 data-src / data-original 上
+              cover = (img.attributes['data-src'] ??
+                      img.attributes['data-original'] ??
+                      img.attributes['src'] ??
+                      '')
+                  .trim();
+            }
+          } catch (_) {
+            // 单条封面抓不到不该让整条结果消失
+          }
+        }
+        items.add(SearchItem(name: name, src: source, cover: cover));
         fragments.add(_fragment(node.node));
       } on XPathRuleFormatException {
         rethrow;
