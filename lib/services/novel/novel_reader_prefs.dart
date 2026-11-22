@@ -144,8 +144,22 @@ class NovelFontFamilyOption {
 /// 读写全部走 GStorage 的 setting box（同步读、异步写）。写失败不抛错 ——
 /// 一次偏好没存上不该让阅读中断。
 class NovelReaderPrefs extends ChangeNotifier {
-  NovelReaderPrefs() {
-    _read();
+  /// 是否已经从 Hive 读过一次。
+  ///
+  /// 不用「构造函数里读一次」：这个单例是懒创建的，理论上可能在 GStorage.init()
+  /// 之前被 inject 到（比如以后有人从启动流程早期就用它）。那样读会抛错、
+  /// 落到默认值，而且**再也不会重读** —— 用户上次调的字号就白设了。
+  /// 所以改成「第一次被访问时读，读失败下次还试」。
+  bool _loaded = false;
+
+  void _ensureLoaded() {
+    if (_loaded) return;
+    try {
+      _read();
+      _loaded = true;
+    } catch (_) {
+      // box 还没打开（极早期调用）时保持默认值，下次访问再试
+    }
   }
 
   double _fontSize = 18;
@@ -155,26 +169,47 @@ class NovelReaderPrefs extends ChangeNotifier {
   String _themeId = 'paper';
   bool _indent = true;
 
-  double get fontSize => _fontSize;
-  double get lineHeight => _lineHeight;
-  double get margin => _margin;
-  bool get indent => _indent;
-  NovelFontFamilyOption get fontFamily =>
-      NovelFontFamilyOption.byId(_fontFamilyId);
-  NovelThemePreset get theme => NovelThemePreset.byId(_themeId);
+  double get fontSize {
+    _ensureLoaded();
+    return _fontSize;
+  }
+
+  double get lineHeight {
+    _ensureLoaded();
+    return _lineHeight;
+  }
+
+  double get margin {
+    _ensureLoaded();
+    return _margin;
+  }
+
+  bool get indent {
+    _ensureLoaded();
+    return _indent;
+  }
+  NovelFontFamilyOption get fontFamily {
+    _ensureLoaded();
+    return NovelFontFamilyOption.byId(_fontFamilyId);
+  }
+
+  NovelThemePreset get theme {
+    _ensureLoaded();
+    return NovelThemePreset.byId(_themeId);
+  }
 
   /// 正文样式。字重刻意用 w400 而不是主题的 bodyLarge —— 中文正文加粗一点
   /// 就显脏，长读会累。
   TextStyle get textStyle => TextStyle(
-        fontSize: _fontSize,
-        height: _lineHeight,
+        fontSize: fontSize,
+        height: lineHeight,
         color: theme.text,
         fontWeight: FontWeight.w400,
         fontFamily: fontFamily.family,
       );
 
   TextStyle get titleStyle => TextStyle(
-        fontSize: _fontSize + 3,
+        fontSize: fontSize + 3,
         height: 1.4,
         color: theme.text,
         fontWeight: FontWeight.w600,
@@ -182,25 +217,22 @@ class NovelReaderPrefs extends ChangeNotifier {
       );
 
   TextStyle get captionStyle => TextStyle(
-        fontSize: (_fontSize - 4).clamp(10, 20).toDouble(),
+        fontSize: (fontSize - 4).clamp(10, 20).toDouble(),
         color: theme.secondary,
         fontFamily: fontFamily.family,
       );
 
   void _read() {
-    try {
-      _fontSize = GStorage.getSetting(SettingsKeys.novelFontSize);
-      _lineHeight = GStorage.getSetting(SettingsKeys.novelLineHeight);
-      _margin = GStorage.getSetting(SettingsKeys.novelMargin);
-      _fontFamilyId = GStorage.getSetting(SettingsKeys.novelFontFamily);
-      _themeId = GStorage.getSetting(SettingsKeys.novelTheme);
-      _indent = GStorage.getSetting(SettingsKeys.novelIndent);
-    } catch (_) {
-      // box 还没打开（极早期调用）时用默认值，不阻断
-    }
+    _fontSize = GStorage.getSetting(SettingsKeys.novelFontSize);
+    _lineHeight = GStorage.getSetting(SettingsKeys.novelLineHeight);
+    _margin = GStorage.getSetting(SettingsKeys.novelMargin);
+    _fontFamilyId = GStorage.getSetting(SettingsKeys.novelFontFamily);
+    _themeId = GStorage.getSetting(SettingsKeys.novelTheme);
+    _indent = GStorage.getSetting(SettingsKeys.novelIndent);
   }
 
   void setFontSize(double value) {
+    _ensureLoaded();
     final next = value.clamp(12.0, 34.0).toDouble();
     if (next == _fontSize) return;
     _fontSize = next;
@@ -209,6 +241,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   }
 
   void setLineHeight(double value) {
+    _ensureLoaded();
     final next = value.clamp(1.2, 2.6).toDouble();
     if (next == _lineHeight) return;
     _lineHeight = next;
@@ -217,6 +250,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   }
 
   void setMargin(double value) {
+    _ensureLoaded();
     final next = value.clamp(0.0, 48.0).toDouble();
     if (next == _margin) return;
     _margin = next;
@@ -225,6 +259,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   }
 
   void setFontFamily(String id) {
+    _ensureLoaded();
     if (id == _fontFamilyId) return;
     _fontFamilyId = id;
     GStorage.putSetting(SettingsKeys.novelFontFamily, id);
@@ -232,6 +267,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   }
 
   void setTheme(String id) {
+    _ensureLoaded();
     if (id == _themeId) return;
     _themeId = id;
     GStorage.putSetting(SettingsKeys.novelTheme, id);
@@ -239,6 +275,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   }
 
   void setIndent(bool value) {
+    _ensureLoaded();
     if (value == _indent) return;
     _indent = value;
     GStorage.putSetting(SettingsKeys.novelIndent, value);
@@ -247,6 +284,7 @@ class NovelReaderPrefs extends ChangeNotifier {
 
   /// 恢复默认外观（不含阅读进度）。
   void resetAppearance() {
+    _loaded = true;
     _fontSize = 18;
     _lineHeight = 1.8;
     _margin = 20;
