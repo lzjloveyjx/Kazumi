@@ -79,9 +79,42 @@ class NovelContentExtractor {
       for (final br in clone.querySelectorAll('br')) {
         br.replaceWith(Text('\n'));
       }
+      // 图片：lazyload 站点的真实地址在 data-src / data-original 上，src 只是
+      // 一个占位 svg。把真地址提取成一行 [图片] <url>，交给阅读页渲染。
+      // 不做这一步的话，插图会整个丢失 —— 用户看到的就只有文字。
+      for (final img in clone.querySelectorAll('img')) {
+        final url = _imageUrl(img);
+        if (url.isEmpty) {
+          img.remove();
+        } else {
+          img.replaceWith(Text('\n[图片] $url\n'));
+        }
+      }
       return clone.text;
     }
     return node.text ?? '';
+  }
+
+  /// 从 <img> 上取真实图片地址。
+  ///
+  /// 优先级：data-src > data-original > data-lazy-src > src。
+  /// 前几个是常见 lazyload 属性；src 往往只是 loading 占位图，
+  /// 所以放最后，并且要挡掉明显是占位符的值。
+  String _imageUrl(Element img) {
+    for (final attr in const [
+      'data-src',
+      'data-original',
+      'data-lazy-src',
+      'data-echo',
+    ]) {
+      final value = (img.attributes[attr] ?? '').trim();
+      if (value.isNotEmpty) return value;
+    }
+    final src = (img.attributes['src'] ?? '').trim();
+    if (src.isEmpty) return '';
+    // 占位符特征：明确的 loading 图，或者 svg 占位
+    if (src.contains('loading') || src.contains('placeholder')) return '';
+    return src;
   }
 
   String _normalize(String input) {
