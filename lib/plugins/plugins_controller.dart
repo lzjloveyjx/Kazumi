@@ -4,6 +4,7 @@ import 'package:mobx/mobx.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/services/plugin/plugin_validity_tracker.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:kazumi/request/apis/plugin_catalog_api.dart';
 import 'package:kazumi/request/config/rules_repository_config.dart';
 import 'package:kazumi/modules/plugin/plugin_http_module.dart';
@@ -115,6 +116,36 @@ abstract class _PluginsController with Store {
     } else {
       await _migrateLegacyPlugins(legacyDirectory);
     }
+    await _seedBundledNovelRules();
+  }
+
+  /// 随包内置的小说规则（assets/rules/novel/*.json）。
+  ///
+  /// 为什么需要它：KazumiRules 官方仓库 18 条规则全是 anime，没有一条 novel，
+  /// 所以「轻小说」tab 在干净安装上永远是空的。把小说规则打进包，用户装完
+  /// 就能直接读，不必先去别处找 JSON 再手动导入。
+  ///
+  /// 只在「同名规则还没装」时写入，所以用户自己删掉之后不会每次启动又冒出来
+  /// —— 除非他清空全部数据重来，那种情况下重新种一遍是合理的。
+  Future<void> _seedBundledNovelRules() async {
+    const bundled = <String>['linovelib'];
+    final installed = {
+      for (final plugin in pluginList) pluginNameKey(plugin.name),
+    };
+    var seeded = false;
+    for (final name in bundled) {
+      if (installed.contains(pluginNameKey(name))) continue;
+      try {
+        final raw = await rootBundle.loadString('assets/rules/novel/$name.json');
+        pluginList.add(Plugin.fromJson(jsonDecode(raw)));
+        seeded = true;
+        KazumiLogger().i('Plugin: seeded bundled novel rule $name');
+      } catch (error) {
+        // 资源缺失或规则写坏都不该阻断启动
+        KazumiLogger().w('Plugin: bundled rule $name not seeded: $error');
+      }
+    }
+    if (seeded) await _savePlugins();
   }
 
   // Before 1.5.1 each rule was a separate JSON file in the parent directory.
