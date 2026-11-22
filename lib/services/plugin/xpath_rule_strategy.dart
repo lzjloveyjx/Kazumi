@@ -167,10 +167,22 @@ class XPathRuleStrategy {
     );
   }
 
+  /// 解析章节目录。
+  ///
+  /// [pageUrl] 是**目录页自己的 URL**，用来解析相对链接。为什么不能用
+  /// config.baseUrl：目录页通常不在站点根目录（wenku8 的目录在
+  /// `/novel/3/3057/index.htm`，而章节链接写成 `125416.htm`）。按 baseUrl
+  /// 解析会得到 `/125416.htm` —— 一个 404 的地址。这跟动漫侧不同：动漫的
+  /// 规则站点把剧集链接写成站内绝对路径，所以按 baseUrl 解析一直是对的。
   RuleChapterParseResult parseChapters(
     String raw,
-    RuleExecutionConfig config,
-  ) {
+    RuleExecutionConfig config, {
+    String pageUrl = '',
+  }) {
+    // 解析相对链接的基准：优先目录页自身，退化到 baseUrl。
+    final resolveBase = pageUrl.trim().isNotEmpty
+        ? pageUrl.trim()
+        : config.baseUrl;
     final root = _documentElement(raw);
     final roads = <Road>[];
     final diagnostics = <String>[];
@@ -202,7 +214,7 @@ class XPathRuleStrategy {
               continue;
             }
             final name = (episode.text ?? '').replaceAll(RegExp(r'\s+'), '');
-            urls.add(normalizeEpisodeUrl(config.baseUrl, source));
+            urls.add(normalizeEpisodeUrl(resolveBase, source));
             names.add(name.isEmpty ? '第${episodeIndex + 1}集' : name);
           } catch (error) {
             diagnostics.add(
