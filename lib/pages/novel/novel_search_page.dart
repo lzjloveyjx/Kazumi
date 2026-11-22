@@ -121,6 +121,17 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
       });
       return;
     }
+    // 规则声明了随包索引、但索引没加载出来（资源缺失/JSON 坏了）时，
+    // 不要退回在线榜单：这类站点的榜单页往往需要登录，抓回来的是导航噪声。
+    // 直接报错，让用户看到真实原因，而不是一屏乱七八糟的假书。
+    if (plugin.novelIndexAsset.trim().isNotEmpty) {
+      setState(() {
+        _error = '随包书目索引没能加载（${plugin.novelIndexAsset}）。\n'
+            '重装 App 或检查安装包是否完整。';
+        _results = const <SearchItem>[];
+      });
+      return;
+    }
     setState(() {
       _searching = true;
       _error = '';
