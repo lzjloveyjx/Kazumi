@@ -115,7 +115,9 @@ class _NovelSettingsPageState extends State<NovelSettingsPage> {
                     },
                     tiles: [
                       for (final option in NovelFontFamilyOption.values)
-                        SettingsTile.radioTile<String>(
+                        // 类型参数必须写在类名上：命名构造函数不能带类型参数
+                        // （SettingsTile.radioTile<String> 是编译错误）。
+                        SettingsTile<String>.radioTile(
                           leading: option == NovelFontFamilyOption.system
                               ? Icons.smartphone_rounded
                               : Icons.font_download_rounded,
