@@ -9,6 +9,7 @@ import 'package:kazumi/pages/novel/novel_reader_page.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
+import 'package:kazumi/services/novel/novel_local_index.dart';
 import 'package:kazumi/services/plugin/captcha_flow.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart'
     show CaptchaRequiredException;
@@ -48,6 +49,9 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
 
   late final CaptchaFlow _captchaFlow;
 
+  /// 随包索引（wenku8 这类搜索要登录的站点用）。
+  NovelLocalIndex? _localIndex;
+
   @override
   void initState() {
     super.initState();
@@ -63,12 +67,13 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
         if (mounted) setState(() => _searching = false);
       },
     );
-    // 进入即加载榜单：用户点开 tab 就该看到书，而不是一张空页面。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // 进入即加载内容：用户点开 tab 就该看到书，而不是一张空页面。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadLocalIndex();
       if (widget.initialQuery.trim().isNotEmpty) {
-        _search();
+        await _search();
       } else {
-        _loadRanking();
+        await _loadRanking();
       }
     });
   }
@@ -85,9 +90,33 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
   /// 榜单是 linovelib 的 /top/monthvisit/，规则里没有这个概念，所以这里直接
   /// 借规则的搜索通道拿 —— 榜单页和搜索结果页的 searchList 选择器不同，
   /// 因此用一个只改 searchURL 的临时 Plugin 副本。
+  /// 加载随包书名索引（只有配了 novelIndexAsset 的规则才有）。
+  Future<void> _loadLocalIndex() async {
+    final plugin = _source;
+    final asset = plugin?.novelIndexAsset.trim() ?? '';
+    if (asset.isEmpty) {
+      _localIndex = null;
+      return;
+    }
+    if (_localIndex != null) return;
+    final index = await NovelLocalIndex.load(asset);
+    if (!mounted) return;
+    setState(() => _localIndex = index);
+  }
+
   Future<void> _loadRanking() async {
     final plugin = _source;
     if (plugin == null || _searching) return;
+    // 有本地索引就直接拿它当首页列表 —— 比在线抓榜单快，而且是全站书目。
+    final index = _localIndex;
+    if (index != null) {
+      setState(() {
+        _results = index.browse(plugin);
+        _showingSearch = false;
+        _error = '';
+      });
+      return;
+    }
     setState(() {
       _searching = true;
       _error = '';
@@ -111,6 +140,18 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
     if (plugin == null) return;
     if (keyword.isEmpty) {
       await _loadRanking();
+      return;
+    }
+    // 有本地索引就在本地搜：能覆盖全站每一本，而且不需要登录。
+    final index = _localIndex;
+    if (index != null) {
+      final hits = index.search(keyword, plugin);
+      setState(() {
+        _results = hits;
+        _showingSearch = true;
+        _error = '';
+        _searching = false;
+      });
       return;
     }
     if (_searching) return;
