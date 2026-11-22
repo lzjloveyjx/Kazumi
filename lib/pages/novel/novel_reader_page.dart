@@ -132,6 +132,43 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     await _open(picked);
   }
 
+  /// 抽取器把 <img> 折成了 `[图片] <url>` 一行文本 —— 这样正文仍是纯文本、
+  /// 便于段落切分与选择复制。这里再把它认出来还原成图片控件。
+  static const String _imageMarker = '[图片] ';
+
+  Widget _paragraph(ThemeData theme, String text) {
+    if (!text.startsWith(_imageMarker)) {
+      return Text(
+        text,
+        style: theme.textTheme.bodyLarge?.copyWith(height: 1.8, fontSize: 17),
+      );
+    }
+    final url = text.substring(_imageMarker.length).trim();
+    if (!url.startsWith('http')) {
+      return const SizedBox.shrink();
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.network(
+        url,
+        fit: BoxFit.contain,
+        // 图床（readpai）做了防盗链，不带 Referer 会 403。
+        headers: const {'referer': 'https://www.linovelib.com/'},
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          );
+        },
+        errorBuilder: (context, error, stackTrace) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Text('（插图加载失败）$url', style: theme.textTheme.bodySmall),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -192,13 +229,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                 for (final p in _controller.paragraphs)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 14),
-                    child: Text(
-                      p,
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        height: 1.8,
-                        fontSize: 17,
-                      ),
-                    ),
+                    child: _paragraph(theme, p),
                   ),
               ],
             ),
