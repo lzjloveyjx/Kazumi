@@ -7,6 +7,7 @@ import 'package:kazumi/pages/index_page.dart';
 import 'package:kazumi/pages/info/info_module.dart';
 import 'package:kazumi/pages/init_page.dart';
 import 'package:kazumi/pages/my/my_module.dart';
+import 'package:kazumi/pages/novel/novel_module.dart';
 import 'package:kazumi/pages/onboarding/onboarding_page.dart';
 import 'package:kazumi/pages/popular/popular_controller.dart';
 import 'package:kazumi/pages/popular/popular_module.dart';
@@ -60,6 +61,8 @@ final tabModule = createModule(
             )
             ..module(popularModule)
             ..module(timelineModule)
+            // 轻小说 tab：插在「追番」之后、「我的」之前，和底部导航栏顺序一致
+            ..module(novelModule)
             ..module(collectModule)
             ..module(myModule);
         },
