@@ -9,6 +9,9 @@ import 'package:kazumi/pages/novel/novel_reader_page.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
+import 'package:kazumi/services/plugin/captcha_flow.dart';
+import 'package:kazumi/services/plugin/rule_engine_models.dart'
+    show CaptchaRequiredException;
 
 /// 小说搜索页。
 ///
@@ -36,6 +39,12 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
   /// 打开一本书时的加载态（取 chapterRoads 可能慢）。
   String _openingBook = '';
 
+  /// 反爬验证流程（linovelib 的搜索页要求图片验证码）。
+  ///
+  /// 复用动漫侧同一份实现 —— 抽到了 services/plugin/captcha_flow.dart。
+  late final CaptchaFlow _captchaFlow;
+  String _pendingKeyword = '';
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +54,15 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
       ..clear()
       ..addAll(controller.pluginList.where((p) => p.supportsNovel));
     _source = _sources.isEmpty ? null : _sources.first;
+    _captchaFlow = CaptchaFlow(
+      onVerified: (plugin, pageHtml) {
+        // 验证通过后 cookie 已存，直接重试搜索即可。
+        _search();
+      },
+      onCancelled: (plugin) {
+        if (mounted) setState(() => _searching = false);
+      },
+    );
     if (_input.text.trim().isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _search());
     }
@@ -52,6 +70,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
 
   @override
   void dispose() {
+    _captchaFlow.dispose();
     _input.dispose();
     super.dispose();
   }
@@ -65,9 +84,15 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
       _error = '';
       _results = const <SearchItem>[];
     });
+    _pendingKeyword = keyword;
     try {
       final response = await plugin.queryBangumi(keyword);
       if (mounted) setState(() => _results = response.data);
+    } on CaptchaRequiredException {
+      // 站点要求先过验证：弹验证码对话框，验证通过后 onVerified 会重试搜索。
+      if (mounted) setState(() => _searching = false);
+      _captchaFlow.start(plugin, keyword);
+      return;
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
