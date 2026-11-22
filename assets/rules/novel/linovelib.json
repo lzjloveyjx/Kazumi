@@ -27,5 +27,6 @@
     "captchaButton": "//button[contains(text(),'验证并搜索')]",
     "captchaDetectType": 2,
     "captchaDetectValue": "搜索验证"
-  }
+  },
+  "chapterCatalog": "/catalog"
 }
