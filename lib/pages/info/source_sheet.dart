@@ -21,7 +21,7 @@ import 'package:kazumi/plugins/anti_crawler_config.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
-import 'package:kazumi/services/plugin/captcha_verification_service.dart';
+import 'package:kazumi/services/plugin/captcha_flow.dart';
 import 'package:kazumi/services/plugin/plugin_search_service.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart'
     show RuleCancelToken;
@@ -29,7 +29,6 @@ import 'package:kazumi/utils/device.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 part 'source_alias_dialog.dart';
-part 'source_captcha_flow.dart';
 part 'source_sheet_view.dart';
 
 class SourceSheet extends StatefulWidget {
@@ -48,7 +47,7 @@ class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
 
   late final String _keyword;
   late final PluginSearchService _searchService;
-  late final _SourceCaptchaFlow _captchaFlow;
+  late final CaptchaFlow _captchaFlow;
 
   @override
   void initState() {
@@ -59,7 +58,7 @@ class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
       infoController: widget.infoController,
       pluginsController: _pluginsController,
     );
-    _captchaFlow = _SourceCaptchaFlow(
+    _captchaFlow = CaptchaFlow(
       onVerified: _showVerifiedResult,
       onCancelled: (plugin) => _retry(plugin.name),
     );
