@@ -48,6 +48,15 @@ class Plugin {
   /// 轻小说加的。空串表示「这条规则不提供正文」，此时阅读器退回整页文本
   /// 并提示用户补选择器 —— 而不是直接报错，因为整页文本至少能读。
   String chapterContent;
+
+  /// 小说扩展：目录页的路径后缀。
+  ///
+  /// 有些站点的详情页**不含**章节目录，目录在另一个 URL 上。linovelib 就是
+  /// 这样：详情是 `/novel/5491.html`，目录在 `/novel/5491/catalog`。
+  /// 空串表示「详情页本身就是目录页」，此时不做任何变换。
+  ///
+  /// 变换规则：去掉末尾的 `.html` 再拼上本字段（见 [catalogUrlFor]）。
+  String chapterCatalog;
   String referer;
   String searchMode;
   String chapterMode;
@@ -75,6 +84,7 @@ class Plugin {
     required this.chapterRoads,
     required this.chapterResult,
     this.chapterContent = '',
+    this.chapterCatalog = '',
     required this.referer,
     this.searchMode = RuleMode.xpath,
     this.chapterMode = RuleMode.xpath,
@@ -106,6 +116,7 @@ class Plugin {
       chapterRoads: json['chapterRoads'] as String? ?? '',
       chapterResult: json['chapterResult'] as String? ?? '',
       chapterContent: json['chapterContent'] as String? ?? '',
+      chapterCatalog: json['chapterCatalog'] as String? ?? '',
       referer: json['referer'] ?? '',
       searchMode: RuleMode.normalize(json['searchMode']),
       chapterMode: RuleMode.normalize(json['chapterMode']),
@@ -148,6 +159,7 @@ class Plugin {
       chapterRoads: '',
       chapterResult: '',
       chapterContent: '',
+      chapterCatalog: '',
       referer: '',
       searchMode: RuleMode.xpath,
       chapterMode: RuleMode.xpath,
@@ -180,6 +192,7 @@ class Plugin {
       // 只在非空时写出：老规则 JSON 不该被塞一个空字段，
       // 否则导出/再导入会多出一堆无意义的键。
       if (chapterContent.isNotEmpty) 'chapterContent': chapterContent,
+      if (chapterCatalog.isNotEmpty) 'chapterCatalog': chapterCatalog,
       'referer': referer,
       'searchMode': searchMode,
       'chapterMode': chapterMode,
@@ -277,11 +290,29 @@ class Plugin {
     }
   }
 
+  /// 把详情页 URL 换成目录页 URL。
+  ///
+  /// `chapterCatalog` 为空时原样返回（详情页就是目录页）。否则先去掉末尾的
+  /// `.html`，再拼上后缀 —— linovelib 的 `/novel/5491.html` →
+  /// `/novel/5491/catalog`。
+  String catalogUrlFor(String detailUrl) {
+    final suffix = chapterCatalog.trim();
+    if (suffix.isEmpty) return detailUrl;
+    var url = detailUrl.trim();
+    if (url.endsWith('.html')) url = url.substring(0, url.length - 5);
+    if (url.endsWith('/')) url = url.substring(0, url.length - 1);
+    return url + (suffix.startsWith('/') ? suffix : '/$suffix');
+  }
+
   Future<List<Road>> queryChapterRoads(
     String source, {
     RuleCancelToken? cancelToken,
   }) async {
-    return (await traceChapters(source, cancelToken: cancelToken)).roads;
+    return (await traceChapters(
+      catalogUrlFor(source),
+      cancelToken: cancelToken,
+    ))
+        .roads;
   }
 
   String buildFullUrl(String urlItem) {
