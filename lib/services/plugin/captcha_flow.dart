@@ -124,6 +124,8 @@ class CaptchaFlow {
       onVerified(plugin, pageHtml);
     }, onCancelled: () => onCancelled(plugin), errorMessage: '验证失败，请稍后重试'));
   }
+}
+
 class VerifyDialogFrame extends StatelessWidget {
   const VerifyDialogFrame({
     required this.pluginName,
