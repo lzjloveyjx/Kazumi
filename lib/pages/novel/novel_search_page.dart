@@ -54,10 +54,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
       ..addAll(controller.pluginList.where((p) => p.supportsNovel));
     _source = _sources.isEmpty ? null : _sources.first;
     _captchaFlow = CaptchaFlow(
-      onVerified: (plugin, pageHtml) {
-        // 验证通过后 cookie 已存，直接重试搜索即可。
-        _search();
-      },
+      onVerified: _onVerified,
       onCancelled: (plugin) {
         if (mounted) setState(() => _searching = false);
       },
@@ -85,7 +82,22 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
     });
     try {
       final response = await plugin.queryBangumi(keyword);
-      if (mounted) setState(() => _results = response.data);
+      if (!mounted) return;
+      // 客户端按关键词过滤。
+      //
+      // linovelib 的搜索接口要求图片验证码（一次 30 分钟），而榜单页
+      // /top/... 免验证、结构完全一样。所以规则把 searchURL 指向榜单，
+      // 拿回来的是「这一页的全部书」，需要在这里按书名筛一遍 ——
+      // 否则搜「史莱姆」会返回榜单前 30 本毫不相干的书。
+      //
+      // 命中的留下；一本都没命中时保留全部并提示，让用户至少能翻榜单，
+      // 而不是对着空列表不知道发生了什么。
+      final matched = _matchByKeyword(response.data, keyword);
+      setState(() {
+        _results = matched.isEmpty ? response.data : matched;
+        _filteredOut = matched.isEmpty && response.data.isNotEmpty;
+        _error = '';
+      });
     } on CaptchaRequiredException {
       // 站点要求先过验证：弹验证码对话框，验证通过后 onVerified 会重试搜索。
       if (mounted) setState(() => _searching = false);
@@ -96,6 +108,60 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
     } finally {
       if (mounted) setState(() => _searching = false);
     }
+  }
+
+  /// 榜单兜底时，「一本都没命中关键词」的标记，用来在列表上方提示。
+  bool _filteredOut = false;
+
+  /// 按书名（或详情链接里的拼音）筛出与 [keyword] 相关的条目。
+  ///
+  /// 只做包含匹配：把关键词和书名都转小写后比子串。中文不需要分词，
+  /// 「史莱姆」在「关于我转生变成史莱姆这档事」里能直接命中。
+  /// 全角/半角差异（史萊姆 vs 史莱姆）用一个简易归一化抹平。
+  List<SearchItem> _matchByKeyword(List<SearchItem> items, String keyword) {
+    final k = _normalize(keyword);
+    if (k.isEmpty) return items;
+    return items
+        .where((item) => _normalize(item.name).contains(k))
+        .toList(growable: false);
+  }
+
+  String _normalize(String input) {
+    return input
+        .toLowerCase()
+        .replaceAll('萊', '莱')
+        .replaceAll('姆', '姆')
+        .replaceAll('轉', '转')
+        .replaceAll('這', '这')
+        .replaceAll('檔', '档')
+        .replaceAll('於', '于')
+        .replaceAll('個', '个')
+        .replaceAll('會', '会')
+        .replaceAll('學', '学')
+        .replaceAll(RegExp(r'\s+'), '');
+  }
+
+  /// 验证通过后的收尾。
+  ///
+  /// 优先用 WebView 收割到的 [pageHtml] 直接解析 —— 验证码提交后浏览器里
+  /// 已经是结果页了，再发一次 HTTP 请求既慢又可能因为 cookie 口径不同而
+  /// 再次撞上验证页。解析失败才退回重试搜索（此时 cookie 已存，通常能过）。
+  void _onVerified(Plugin plugin, String pageHtml) {
+    if (!mounted) return;
+    try {
+      final harvested = plugin.parseHarvestedSearch(pageHtml);
+      if (harvested != null && harvested.data.isNotEmpty) {
+        setState(() {
+          _results = harvested.data;
+          _error = '';
+          _searching = false;
+        });
+        return;
+      }
+    } catch (_) {
+      // 收割页解析不了就走重试
+    }
+    _search();
   }
 
   Future<void> _openBook(SearchItem item) async {
@@ -206,23 +272,38 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
             )
           else
             Expanded(
-              child: ListView.separated(
-                itemCount: _results.length,
-                separatorBuilder: (_, index) => const Divider(height: 1),
-                itemBuilder: (context, i) {
-                  final item = _results[i];
-                  return ListTile(
-                    leading: const Icon(Icons.menu_book_outlined),
-                    title: Text(item.name),
-                    subtitle: Text(
-                      item.src,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
+              child: Column(
+                children: [
+                  if (_filteredOut)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: Text(
+                        '这个站点的搜索要过验证码，所以这里列的是排行榜。'
+                        '没找到「' + _input.text.trim() + '」，下面是本页全部书目。',
+                        style: theme.textTheme.bodySmall,
+                      ),
                     ),
-                    onTap: () => _openBook(item),
-                  );
-                },
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: _results.length,
+                      separatorBuilder: (_, index) => const Divider(height: 1),
+                      itemBuilder: (context, i) {
+                        final item = _results[i];
+                        return ListTile(
+                          leading: const Icon(Icons.menu_book_outlined),
+                          title: Text(item.name),
+                          subtitle: Text(
+                            item.src,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall,
+                          ),
+                          onTap: () => _openBook(item),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
         ],
