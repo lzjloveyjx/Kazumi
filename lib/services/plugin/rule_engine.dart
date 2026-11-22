@@ -180,6 +180,36 @@ class RuleEngine {
     }
   }
 
+  /// 抓一章的原始 HTML —— 小说阅读器用。
+  ///
+  /// 刻意不在这里解析正文：抽取逻辑属于 `NovelContentExtractor`，引擎只
+  /// 负责「按这条规则的身份把页面拿回来」。这样 UA / Referer / cookie /
+  /// 反爬这几件事不必在小说侧再实现一遍。
+  ///
+  /// 复用 `prepareChapterRequest` 的请求准备（它只依赖 baseUrl 与
+  /// chapterMode），所以小说规则即使 chapterRoads 为空也能取到页面。
+  Future<String> fetchChapterHtml(
+    RuleExecutionConfig config,
+    String chapterUrl, {
+    CancelToken? cancelToken,
+  }) async {
+    late final PreparedRuleRequest request;
+    try {
+      request = _xpathStrategy.prepareChapterRequest(config, chapterUrl);
+    } catch (error, stackTrace) {
+      _logFailure(config, 'novel chapter request preparation', error, stackTrace);
+      throw ChapterErrorException(config.pluginName, cause: error);
+    }
+    return _executeRequest(
+      request,
+      config,
+      phase: 'novel chapter request',
+      wrapError: (error) =>
+          ChapterErrorException(config.pluginName, cause: error),
+      cancelToken: cancelToken,
+    );
+  }
+
   Future<String> _executeRequest(
     PreparedRuleRequest request,
     RuleExecutionConfig config, {
