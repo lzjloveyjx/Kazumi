@@ -21,6 +21,9 @@ dependencies:
   cookie_jar: ^4.0.9
   crypto: ^3.0.6
   connectivity_plus: ^6.0.5
+  # GBK / GB2312 解码。dart:convert 只有 UTF-8/Latin-1，而 wenku8 这类老站点
+  # 整站是 GBK —— 不转码拿到的是乱码，书名和正文全都读不出来。
+  enough_convert: ^1.7.1
 
   path_provider: ^2.1.5
   hive_ce: ^2.16.0
