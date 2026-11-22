@@ -20,11 +20,6 @@
   "chapterResult": "//a[contains(@href,'.htm')]",
   "chapterContent": "//div[@id='content']",
   "chapterCatalog": "/index.htm",
-  "rankingURL": "https://www.wenku8.cc/book/1.htm",
-  "rankingList": "//table//tr",
-  "rankingName": "//a[contains(@href,'.htm')]",
-  "rankingResult": "//a[contains(@href,'.htm')]",
-  "rankingCover": "//img",
   "referer": "https://www.wenku8.cc",
   "antiCrawlerConfig": {
     "enabled": false
