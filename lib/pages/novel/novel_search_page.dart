@@ -17,12 +17,12 @@ import 'package:kazumi/services/plugin/rule_engine_models.dart'
 /// 轻小说主页。
 ///
 /// 三个状态：
-///   • 刚进来 → 直接显示排行榜（不用先搜索，因为榜单本身就是内容）
+///   • 刚进来 → 直接显示书目（有随包索引就用索引，否则抓榜单）
 ///   • 搜过 → 显示搜索结果（网格 + 封面）
-///   • 搜索被验证码拦住 → 弹验证码，通过后自动继续
+///   • 搜索被验证码拦住 → 弹验证码，通过后自动继续（仅在线搜索的源）
 ///
-/// 搜索完全走规则引擎（linovelib 的 /S6/?searchkey=），不再用「拿榜单当搜索」
-/// 的临时方案 —— 那条路只能搜到榜单里的 30 本。
+/// 搜索优先走随包索引：wenku8 的站点搜索要登录，但书目索引随包带着，
+/// 本地子串匹配能覆盖全站每一本，且不需要账号。
 class NovelSearchPage extends StatefulWidget {
   const NovelSearchPage({super.key, this.initialQuery = ''});
 
@@ -41,7 +41,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
   String _error = '';
   List<SearchItem> _results = const <SearchItem>[];
 
-  /// true = 当前显示的是搜索结果；false = 排行榜。
+  /// true = 当前显示的是搜索结果；false = 首屏书目。
   bool _showingSearch = false;
 
   /// 打开一本书时的加载态（取 chapterRoads 可能慢）。
@@ -49,8 +49,16 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
 
   late final CaptchaFlow _captchaFlow;
 
-  /// 随包索引（wenku8 这类搜索要登录的站点用）。
+  /// 随包索引（搜索要登录的站点用）。
   NovelLocalIndex? _localIndex;
+
+  /// 封面图带的 Referer（取规则里声明的）。
+  String get _imageReferer {
+    final plugin = _source;
+    if (plugin == null) return '';
+    final referer = plugin.referer.trim();
+    return referer.isNotEmpty ? referer : plugin.baseUrl;
+  }
 
   @override
   void initState() {
@@ -73,7 +81,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
       if (widget.initialQuery.trim().isNotEmpty) {
         await _search();
       } else {
-        await _loadRanking();
+        await _loadHomeList();
       }
     });
   }
@@ -85,12 +93,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
     super.dispose();
   }
 
-  /// 加载排行榜（免验证码）。
-  ///
-  /// 榜单是 linovelib 的 /top/monthvisit/，规则里没有这个概念，所以这里直接
-  /// 借规则的搜索通道拿 —— 榜单页和搜索结果页的 searchList 选择器不同，
-  /// 因此用一个只改 searchURL 的临时 Plugin 副本。
-  /// 加载随包书名索引（只有配了 novelIndexAsset 的规则才有）。
+  /// 加载随包书目索引（只有配了 novelIndexAsset 的规则才有）。
   Future<void> _loadLocalIndex() async {
     final plugin = _source;
     final asset = plugin?.novelIndexAsset.trim() ?? '';
@@ -104,7 +107,8 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
     setState(() => _localIndex = index);
   }
 
-  Future<void> _loadRanking() async {
+  /// 首屏书目。
+  Future<void> _loadHomeList() async {
     final plugin = _source;
     if (plugin == null || _searching) return;
     // 有本地索引就直接拿它当首页列表 —— 比在线抓榜单快，而且是全站书目。
@@ -139,7 +143,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
     final keyword = _input.text.trim();
     if (plugin == null) return;
     if (keyword.isEmpty) {
-      await _loadRanking();
+      await _loadHomeList();
       return;
     }
     // 有本地索引就在本地搜：能覆盖全站每一本，而且不需要登录。
@@ -194,6 +198,21 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
       // 收割页解析不了就走重试
     }
     _search();
+  }
+
+  Future<void> _switchSource(Plugin plugin) async {
+    if (identical(plugin, _source)) return;
+    setState(() {
+      _source = plugin;
+      _localIndex = null;
+      _results = const <SearchItem>[];
+      _error = '';
+      _showingSearch = false;
+      _searching = false;
+    });
+    _input.clear();
+    await _loadLocalIndex();
+    await _loadHomeList();
   }
 
   Future<void> _openBook(SearchItem item) async {
@@ -268,10 +287,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                       child: ChoiceChip(
                         label: Text(p.name),
                         selected: identical(p, _source),
-                        onSelected: (_) {
-                          setState(() => _source = p);
-                          _loadRanking();
-                        },
+                        onSelected: (_) => _switchSource(p),
                       ),
                     ),
                 ],
@@ -294,7 +310,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                 title: _error,
                 actions: [
                   FilledButton(
-                    onPressed: _showingSearch ? _search : _loadRanking,
+                    onPressed: _showingSearch ? _search : _loadHomeList,
                     child: const Text('重试'),
                   ),
                 ],
@@ -306,10 +322,10 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                 icon: Icons.search,
                 title: _showingSearch
                     ? '没有搜到这本书。\n换个关键词，或者用繁体书名试试。'
-                    : '榜单暂时没加载出来，下拉重试。',
+                    : '书目暂时没加载出来，下拉重试。',
                 actions: [
                   FilledButton(
-                    onPressed: _showingSearch ? _search : _loadRanking,
+                    onPressed: _showingSearch ? _search : _loadHomeList,
                     child: const Text('重试'),
                   ),
                 ],
@@ -318,7 +334,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
           else
             Expanded(
               child: RefreshIndicator(
-                onRefresh: _showingSearch ? _search : _loadRanking,
+                onRefresh: _showingSearch ? _search : _loadHomeList,
                 child: GridView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   gridDelegate:
@@ -332,6 +348,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                   itemBuilder: (context, i) => _BookCard(
                     item: _results[i],
                     theme: theme,
+                    referer: _imageReferer,
                     onTap: () => _openBook(_results[i]),
                   ),
                 ),
@@ -348,11 +365,13 @@ class _BookCard extends StatelessWidget {
   const _BookCard({
     required this.item,
     required this.theme,
+    required this.referer,
     required this.onTap,
   });
 
   final SearchItem item;
   final ThemeData theme;
+  final String referer;
   final VoidCallback onTap;
 
   @override
@@ -376,11 +395,11 @@ class _BookCard extends StatelessWidget {
                       item.cover,
                       fit: BoxFit.cover,
                       width: double.infinity,
-                      // 图床对 Referer 不敏感（实测带不带都 200），
-                      // 但带上更稳妥。
-                      headers: const {
-                        'referer': 'https://www.linovelib.com/',
-                      },
+                      // 图床对 Referer 敏感度不一（wenku8 的 img 站实测
+                      // 带不带都 200），带上规则里声明的 referer 更稳妥。
+                      headers: referer.isEmpty
+                          ? const {}
+                          : {'referer': referer},
                       loadingBuilder: (context, child, progress) {
                         if (progress == null) return child;
                         return Container(
