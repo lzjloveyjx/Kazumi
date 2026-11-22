@@ -65,6 +65,7 @@ class RuleExecutionConfig {
     required this.searchResult,
     required this.chapterRoads,
     required this.chapterResult,
+    this.chapterContent = '',
     required this.searchApiConfig,
     required this.chapterApiConfig,
     required this.antiCrawlerConfig,
@@ -81,6 +82,9 @@ class RuleExecutionConfig {
   final String searchResult;
   final String chapterRoads;
   final String chapterResult;
+
+  /// 小说扩展：章节正文的 XPath（空串 = 该规则不提供正文）。
+  final String chapterContent;
   final ApiSearchConfig searchApiConfig;
   final ApiChapterConfig chapterApiConfig;
   final AntiCrawlerConfig antiCrawlerConfig;
