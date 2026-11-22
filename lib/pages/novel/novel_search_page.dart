@@ -13,11 +13,15 @@ import 'package:kazumi/services/plugin/captcha_flow.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart'
     show CaptchaRequiredException;
 
-/// 小说搜索页。
+/// 轻小说主页。
 ///
-/// 只列出 supportsNovel 为真的规则（type == novel，或规则里写了
-/// chapterContent）。搜索本身完全复用 Kazumi 的 Plugin.queryBangumi，
-/// 也就是现有规则引擎 —— 这里没有任何新的抓取逻辑。
+/// 三个状态：
+///   • 刚进来 → 直接显示排行榜（不用先搜索，因为榜单本身就是内容）
+///   • 搜过 → 显示搜索结果（网格 + 封面）
+///   • 搜索被验证码拦住 → 弹验证码，通过后自动继续
+///
+/// 搜索完全走规则引擎（linovelib 的 /S6/?searchkey=），不再用「拿榜单当搜索」
+/// 的临时方案 —— 那条路只能搜到榜单里的 30 本。
 class NovelSearchPage extends StatefulWidget {
   const NovelSearchPage({super.key, this.initialQuery = ''});
 
@@ -36,12 +40,12 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
   String _error = '';
   List<SearchItem> _results = const <SearchItem>[];
 
+  /// true = 当前显示的是搜索结果；false = 排行榜。
+  bool _showingSearch = false;
+
   /// 打开一本书时的加载态（取 chapterRoads 可能慢）。
   String _openingBook = '';
 
-  /// 反爬验证流程（linovelib 的搜索页要求图片验证码）。
-  ///
-  /// 复用动漫侧同一份实现 —— 抽到了 services/plugin/captcha_flow.dart。
   late final CaptchaFlow _captchaFlow;
 
   @override
@@ -59,9 +63,14 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
         if (mounted) setState(() => _searching = false);
       },
     );
-    if (_input.text.trim().isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _search());
-    }
+    // 进入即加载榜单：用户点开 tab 就该看到书，而不是一张空页面。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.initialQuery.trim().isNotEmpty) {
+        _search();
+      } else {
+        _loadRanking();
+      }
+    });
   }
 
   @override
@@ -71,35 +80,51 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
     super.dispose();
   }
 
-  Future<void> _search() async {
+  /// 加载排行榜（免验证码）。
+  ///
+  /// 榜单是 linovelib 的 /top/monthvisit/，规则里没有这个概念，所以这里直接
+  /// 借规则的搜索通道拿 —— 榜单页和搜索结果页的 searchList 选择器不同，
+  /// 因此用一个只改 searchURL 的临时 Plugin 副本。
+  Future<void> _loadRanking() async {
     final plugin = _source;
-    final keyword = _input.text.trim();
-    if (plugin == null || keyword.isEmpty || _searching) return;
+    if (plugin == null || _searching) return;
     setState(() {
       _searching = true;
       _error = '';
+      _showingSearch = false;
+    });
+    try {
+      final ranking = plugin.forRanking();
+      final response = await ranking.queryBangumi('');
+      if (!mounted) return;
+      setState(() => _results = response.data);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  Future<void> _search() async {
+    final plugin = _source;
+    final keyword = _input.text.trim();
+    if (plugin == null) return;
+    if (keyword.isEmpty) {
+      await _loadRanking();
+      return;
+    }
+    if (_searching) return;
+    setState(() {
+      _searching = true;
+      _error = '';
+      _showingSearch = true;
       _results = const <SearchItem>[];
     });
     try {
       final response = await plugin.queryBangumi(keyword);
       if (!mounted) return;
-      // 客户端按关键词过滤。
-      //
-      // linovelib 的搜索接口要求图片验证码（一次 30 分钟），而榜单页
-      // /top/... 免验证、结构完全一样。所以规则把 searchURL 指向榜单，
-      // 拿回来的是「这一页的全部书」，需要在这里按书名筛一遍 ——
-      // 否则搜「史莱姆」会返回榜单前 30 本毫不相干的书。
-      //
-      // 命中的留下；一本都没命中时保留全部并提示，让用户至少能翻榜单，
-      // 而不是对着空列表不知道发生了什么。
-      final matched = _matchByKeyword(response.data, keyword);
-      setState(() {
-        _results = matched.isEmpty ? response.data : matched;
-        _filteredOut = matched.isEmpty && response.data.isNotEmpty;
-        _error = '';
-      });
+      setState(() => _results = response.data);
     } on CaptchaRequiredException {
-      // 站点要求先过验证：弹验证码对话框，验证通过后 onVerified 会重试搜索。
       if (mounted) setState(() => _searching = false);
       _captchaFlow.start(plugin, keyword);
       return;
@@ -110,42 +135,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
     }
   }
 
-  /// 榜单兜底时，「一本都没命中关键词」的标记，用来在列表上方提示。
-  bool _filteredOut = false;
-
-  /// 按书名（或详情链接里的拼音）筛出与 [keyword] 相关的条目。
-  ///
-  /// 只做包含匹配：把关键词和书名都转小写后比子串。中文不需要分词，
-  /// 「史莱姆」在「关于我转生变成史莱姆这档事」里能直接命中。
-  /// 全角/半角差异（史萊姆 vs 史莱姆）用一个简易归一化抹平。
-  List<SearchItem> _matchByKeyword(List<SearchItem> items, String keyword) {
-    final k = _normalize(keyword);
-    if (k.isEmpty) return items;
-    return items
-        .where((item) => _normalize(item.name).contains(k))
-        .toList(growable: false);
-  }
-
-  String _normalize(String input) {
-    return input
-        .toLowerCase()
-        .replaceAll('萊', '莱')
-        .replaceAll('姆', '姆')
-        .replaceAll('轉', '转')
-        .replaceAll('這', '这')
-        .replaceAll('檔', '档')
-        .replaceAll('於', '于')
-        .replaceAll('個', '个')
-        .replaceAll('會', '会')
-        .replaceAll('學', '学')
-        .replaceAll(RegExp(r'\s+'), '');
-  }
-
-  /// 验证通过后的收尾。
-  ///
-  /// 优先用 WebView 收割到的 [pageHtml] 直接解析 —— 验证码提交后浏览器里
-  /// 已经是结果页了，再发一次 HTTP 请求既慢又可能因为 cookie 口径不同而
-  /// 再次撞上验证页。解析失败才退回重试搜索（此时 cookie 已存，通常能过）。
+  /// 验证通过后直接用收割到的页面解析，省一次请求。
   void _onVerified(Plugin plugin, String pageHtml) {
     if (!mounted) return;
     try {
@@ -155,6 +145,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
           _results = harvested.data;
           _error = '';
           _searching = false;
+          _showingSearch = true;
         });
         return;
       }
@@ -209,7 +200,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                     textInputAction: TextInputAction.search,
                     onSubmitted: (_) => _search(),
                     decoration: const InputDecoration(
-                      hintText: '书名 / 作者',
+                      hintText: '搜书名 / 作者',
                       isDense: true,
                       border: OutlineInputBorder(),
                     ),
@@ -236,7 +227,10 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                       child: ChoiceChip(
                         label: Text(p.name),
                         selected: identical(p, _source),
-                        onSelected: (_) => setState(() => _source = p),
+                        onSelected: (_) {
+                          setState(() => _source = p);
+                          _loadRanking();
+                        },
                       ),
                     ),
                 ],
@@ -247,8 +241,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
               child: GeneralEmptyState(
                 icon: Icons.auto_stories_outlined,
                 title: '还没有小说规则源。\n'
-                    '到「我的 → 规则管理」装一条 type=novel 的规则，'
-                    '或在规则里填上 chapterContent。',
+                    '到「我的 → 规则管理」装一条 type=novel 的规则。',
               ),
             )
           else if (_searching || _openingBook.isNotEmpty)
@@ -259,53 +252,121 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                 icon: Icons.error_outline,
                 title: _error,
                 actions: [
-                  FilledButton(onPressed: _search, child: const Text('重试')),
+                  FilledButton(
+                    onPressed: _showingSearch ? _search : _loadRanking,
+                    child: const Text('重试'),
+                  ),
                 ],
               ),
             )
           else if (_results.isEmpty)
-            const Expanded(
+            Expanded(
               child: GeneralEmptyState(
                 icon: Icons.search,
-                title: '输入书名搜一下。\n结果来自当前选中的规则源。',
+                title: _showingSearch
+                    ? '没有搜到这本书。\n换个关键词，或者用繁体书名试试。'
+                    : '榜单暂时没加载出来，下拉重试。',
+                actions: [
+                  FilledButton(
+                    onPressed: _showingSearch ? _search : _loadRanking,
+                    child: const Text('重试'),
+                  ),
+                ],
               ),
             )
           else
             Expanded(
-              child: Column(
-                children: [
-                  if (_filteredOut)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                      child: Text(
-                        '这个站点的搜索要过验证码，所以这里列的是排行榜。'
-                        '没找到「' + _input.text.trim() + '」，下面是本页全部书目。',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: _results.length,
-                      separatorBuilder: (_, index) => const Divider(height: 1),
-                      itemBuilder: (context, i) {
-                        final item = _results[i];
-                        return ListTile(
-                          leading: const Icon(Icons.menu_book_outlined),
-                          title: Text(item.name),
-                          subtitle: Text(
-                            item.src,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall,
-                          ),
-                          onTap: () => _openBook(item),
-                        );
-                      },
-                    ),
+              child: RefreshIndicator(
+                onRefresh: _showingSearch ? _search : _loadRanking,
+                child: GridView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                  gridDelegate:
+                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 130,
+                    childAspectRatio: 0.58,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 16,
                   ),
-                ],
+                  itemCount: _results.length,
+                  itemBuilder: (context, i) => _BookCard(
+                    item: _results[i],
+                    theme: theme,
+                    onTap: () => _openBook(_results[i]),
+                  ),
+                ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 一本书的封面卡片。
+class _BookCard extends StatelessWidget {
+  const _BookCard({
+    required this.item,
+    required this.theme,
+    required this.onTap,
+  });
+
+  final SearchItem item;
+  final ThemeData theme;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: item.cover.isEmpty
+                  ? Container(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.menu_book_outlined, size: 28),
+                    )
+                  : Image.network(
+                      item.cover,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      // 图床对 Referer 不敏感（实测带不带都 200），
+                      // 但带上更稳妥。
+                      headers: const {
+                        'referer': 'https://www.linovelib.com/',
+                      },
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return Container(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          alignment: Alignment.center,
+                          child: const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.broken_image_outlined, size: 24),
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            item.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall,
+          ),
         ],
       ),
     );
