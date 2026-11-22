@@ -11,8 +11,6 @@ import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/novel/novel_local_index.dart';
 import 'package:kazumi/services/plugin/captcha_flow.dart';
-import 'package:kazumi/services/plugin/rule_engine_models.dart'
-    show CaptchaRequiredException;
 
 /// 轻小说主页。
 ///
@@ -247,7 +245,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
         ),
       );
     } catch (e) {
-      KazumiLogger().w('novel open book failed: ' + e.toString());
+      KazumiLogger().w('novel open book failed: ${e}');
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _openingBook = '');
