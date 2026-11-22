@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_modular/flutter_modular.dart';
 
 import 'package:kazumi/bean/widget/empty_state_widget.dart';
+import 'package:kazumi/bean/widget/novel_cover_image.dart';
 import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/pages/novel/novel_reader_controller.dart';
 import 'package:kazumi/plugins/plugins.dart';
@@ -26,11 +27,17 @@ class NovelReaderPage extends StatefulWidget {
     required this.plugin,
     required this.bookTitle,
     required this.roads,
+    this.initialRoadIndex = 0,
+    this.initialChapterIndex = 0,
   });
 
   final Plugin plugin;
   final String bookTitle;
   final List<Road> roads;
+
+  /// 从哪条线路的第几章开始。目录页点某一章时传进来，直接跳到那一章。
+  final int initialRoadIndex;
+  final int initialChapterIndex;
 
   @override
   State<NovelReaderPage> createState() => _NovelReaderPageState();
@@ -40,8 +47,8 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   late final NovelReaderController _controller;
   late final NovelReaderPrefs _prefs;
   final ScrollController _scroll = ScrollController();
-  int _roadIndex = 0;
-  int _chapterIndex = 0;
+  late int _roadIndex = widget.initialRoadIndex;
+  late int _chapterIndex = widget.initialChapterIndex;
 
   /// 顶栏/底栏是否可见。
   bool _barsVisible = true;
@@ -70,13 +77,25 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       dropSelector: widget.plugin.chapterDrop,
     );
     _controller.addListener(_onControllerChanged);
+    // 夹一下越界：目录页传进来的索引可能因为规则变更而失效。
+    if (_roadIndex < 0 || _roadIndex >= widget.roads.length) _roadIndex = 0;
+    if (_chapterIndex < 0 || _chapterIndex >= _urls.length) _chapterIndex = 0;
     if (_urls.isNotEmpty) {
-      _open(0);
+      _open(_chapterIndex);
     }
+    // 阅读时进入沉浸式：隐藏系统状态栏与手势条，整屏都是正文。
+    //
+    // 用 immersiveSticky 而不是 immersive：sticky 在用户从边缘滑动时
+    // 临时露出系统栏、几秒后自动再藏起来，而 immersive 会一直藏着直到
+    // 代码主动恢复 —— 那样用户想下拉通知栏会很别扭。
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   @override
   void dispose() {
+    // 退出阅读页必须把系统栏还回去，否则回到列表页会没有状态栏。
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+        overlays: SystemUiOverlay.values);
     _controller.removeListener(_onControllerChanged);
     _controller.dispose();
     _scroll.dispose();
@@ -213,7 +232,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     return widget.plugin.baseUrl;
   }
 
-  Widget _paragraph(String text, NovelThemePreset preset) {
+  Widget _paragraph(String text) {
     if (!text.startsWith(_imageMarker)) {
       // 首行缩进用两个全角空格，比 TextIndent 更贴近中文排版习惯：
       // 段落换行后缩进自然对齐，也不会在图片段落上多出一截空白。
@@ -228,26 +247,11 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: Image.network(
-          url,
+        // 插图同样要走带 UA 的加载器：图床对 dart:io 默认 UA 返 403。
+        child: NovelCoverImage(
+          url: url,
+          referer: _imageReferer,
           fit: BoxFit.contain,
-          headers: {'referer': _imageReferer},
-          loadingBuilder: (context, child, progress) {
-            if (progress == null) return child;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: preset.secondary,
-                ),
-              ),
-            );
-          },
-          errorBuilder: (context, error, stackTrace) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text('（插图加载失败）$url', style: _prefs.captionStyle),
-          ),
         ),
       ),
     );
@@ -260,8 +264,11 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       builder: (context, _) {
         final preset = _prefs.theme;
         final media = MediaQuery.of(context);
-        final topInset = media.padding.top + kToolbarHeight;
-        final bottomInset = media.padding.bottom + 64;
+        // 工具栏收起时不再给它留位置 —— 否则「收起」只是视觉上滑走，
+        // 正文上方还空着一条，等于没全屏。
+        final topInset =
+            _barsVisible ? media.padding.top + kToolbarHeight : media.padding.top;
+        final bottomInset = _barsVisible ? media.padding.bottom + 64 : media.padding.bottom;
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: preset.isDark
               ? SystemUiOverlayStyle.light
@@ -344,7 +351,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                 for (final p in _controller.paragraphs)
                   Padding(
                     padding: EdgeInsets.only(bottom: _prefs.fontSize * 0.72),
-                    child: _paragraph(p, preset),
+                    child: _paragraph(p),
                   ),
                 const SizedBox(height: 12),
                 Text(
