@@ -162,7 +162,7 @@ class RuleEngine {
               source: source,
               baseUrl: config.baseUrl,
             )
-          : _xpathStrategy.parseChapters(raw, config);
+          : _xpathStrategy.parseChapters(raw, config, pageUrl: request.url);
       if (parsed.roads.isEmpty) {
         throw ChapterErrorException(config.pluginName);
       }
