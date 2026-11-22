@@ -67,6 +67,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       plugin: widget.plugin,
       bookTitle: widget.bookTitle,
       contentSelector: widget.plugin.chapterContent,
+      dropSelector: widget.plugin.chapterDrop,
     );
     _controller.addListener(_onControllerChanged);
     if (_urls.isNotEmpty) {
