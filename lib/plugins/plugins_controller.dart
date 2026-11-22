@@ -151,30 +151,61 @@ abstract class _PluginsController with Store {
   /// 所以「轻小说」tab 在干净安装上永远是空的。把小说规则打进包，用户装完
   /// 就能直接读，不必先去别处找 JSON 再手动导入。
   ///
-  /// 只在「同名规则还没装」时写入，所以用户自己删掉之后不会每次启动又冒出来
-  /// —— 除非他清空全部数据重来，那种情况下重新种一遍是合理的。
+  /// 装的条件有两个：
+  ///   • 同名规则还没装 → 直接种进去
+  ///   • 装了、但**随包版本比它新** → 覆盖
+  ///
+  /// 第二条是必须的：随包规则一旦发布就会被写进用户的 plugins.json，之后
+  /// 修好选择器、发新版本，老用户的列表里还是那份坏规则 —— 站点改版或规则
+  /// 本身写错时，光改 assets 是修不好已装用户的（会一直报
+  /// ChapterErrorException）。所以用 version 字段做升级判据。
+  ///
+  /// 反过来，随包版本没涨就不动它，这样用户自己改过的规则不会被每次启动
+  /// 悄悄冲掉。
   Future<void> _seedBundledNovelRules() async {
     // 只随包带 wenku8：它书页/目录/正文全部免登录，配合随包书目索引
     // 能搜到全站 4300+ 本，不需要账号也不需要验证码。
     // linovelib 已移除（搜索要人工过验证码，体验不如 wenku8 干净）。
     const bundled = <String>['wenku8'];
-    final installed = {
-      for (final plugin in pluginList) pluginNameKey(plugin.name),
-    };
-    var seeded = false;
+    var changed = false;
     for (final name in bundled) {
-      if (installed.contains(pluginNameKey(name))) continue;
       try {
         final raw = await rootBundle.loadString('assets/rules/novel/$name.json');
-        pluginList.add(Plugin.fromJson(jsonDecode(raw)));
-        seeded = true;
-        KazumiLogger().i('Plugin: seeded bundled novel rule $name');
+        final bundledPlugin = Plugin.fromJson(jsonDecode(raw));
+        final key = pluginNameKey(name);
+        final index =
+            pluginList.indexWhere((p) => pluginNameKey(p.name) == key);
+        if (index < 0) {
+          pluginList.add(bundledPlugin);
+          changed = true;
+          KazumiLogger().i('Plugin: seeded bundled novel rule $name');
+          continue;
+        }
+        final installedVersion = pluginList[index].version.trim();
+        final bundledVersion = bundledPlugin.version.trim();
+        // 版本号解析不了时按「不升级」处理，避免把用户自改的规则冲掉。
+        if (installedVersion.isEmpty || bundledVersion.isEmpty) continue;
+        // needUpdate(local, remote) = remote 比 local 新。
+        bool bundledIsNewer;
+        try {
+          bundledIsNewer = needUpdate(installedVersion, bundledVersion);
+        } on FormatException {
+          continue;
+        }
+        if (bundledIsNewer) {
+          pluginList[index] = bundledPlugin;
+          changed = true;
+          KazumiLogger().i(
+            'Plugin: upgraded bundled rule $name '
+            '$installedVersion -> $bundledVersion',
+          );
+        }
       } catch (error) {
         // 资源缺失或规则写坏都不该阻断启动
         KazumiLogger().w('Plugin: bundled rule $name not seeded: $error');
       }
     }
-    if (seeded) await _savePlugins();
+    if (changed) await _savePlugins();
   }
 
   // Before 1.5.1 each rule was a separate JSON file in the parent directory.
