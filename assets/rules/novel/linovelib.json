@@ -2,7 +2,7 @@
   "api": "9",
   "type": "novel",
   "name": "linovelib",
-  "version": "1.1",
+  "version": "2.1",
   "muliSources": true,
   "useWebview": false,
   "useNativePlayer": false,
@@ -11,16 +11,28 @@
   "adBlocker": false,
   "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
   "baseURL": "https://www.linovelib.com",
-  "searchURL": "https://www.linovelib.com/top/monthvisit/1.html?searchkey=@keyword",
-  "searchList": "//div[contains(@class,'rank_d_list')]",
-  "searchName": "//div[contains(@class,'rank_d_b_name')]/a",
-  "searchResult": "//div[contains(@class,'rank_d_b_name')]/a",
+  "searchURL": "https://www.linovelib.com/S6/?searchkey=@keyword",
+  "searchList": "//div[contains(@class,'search-result-list')]",
+  "searchName": "//h2[contains(@class,'tit')]//a",
+  "searchResult": "//h2[contains(@class,'tit')]//a",
   "chapterRoads": "//div[contains(@class,'volume clearfix')]",
   "chapterResult": "//ul[contains(@class,'chapter-list')]/li/a",
   "chapterContent": "//div[@id='mlfy_main_text']",
   "chapterCatalog": "/catalog",
   "referer": "https://www.linovelib.com",
   "antiCrawlerConfig": {
-    "enabled": false
-  }
+    "enabled": true,
+    "captchaType": 1,
+    "captchaImage": "//img[@id='search-captcha']",
+    "captchaInput": "//input[@id='search_code']",
+    "captchaButton": "//button[contains(text(),'验证并搜索')]",
+    "captchaDetectType": 2,
+    "captchaDetectValue": "搜索验证"
+  },
+  "searchCover": "//div[contains(@class,'imgbox')]//img",
+  "rankingURL": "https://www.linovelib.com/top/monthvisit/1.html",
+  "rankingList": "//div[contains(@class,'rank_d_list')]",
+  "rankingName": "//div[contains(@class,'rank_d_b_name')]/a",
+  "rankingResult": "//div[contains(@class,'rank_d_b_name')]/a",
+  "rankingCover": "//div[contains(@class,'rank_d_book_img')]//img"
 }
