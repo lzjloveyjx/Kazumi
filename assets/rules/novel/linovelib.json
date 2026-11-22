@@ -1,0 +1,31 @@
+{
+  "api": "9",
+  "type": "novel",
+  "name": "linovelib",
+  "version": "1.0",
+  "muliSources": true,
+  "useWebview": false,
+  "useNativePlayer": false,
+  "usePost": false,
+  "useLegacyParser": false,
+  "adBlocker": false,
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+  "baseURL": "https://www.linovelib.com",
+  "searchURL": "https://www.linovelib.com/S6/?searchkey=@keyword",
+  "searchList": "//div[contains(@class,'rank_d_list')]",
+  "searchName": "//div[contains(@class,'rank_d_b_name')]/a",
+  "searchResult": "//div[contains(@class,'rank_d_b_name')]/a",
+  "chapterRoads": "//div[contains(@class,'volume clearfix')]",
+  "chapterResult": "//ul[contains(@class,'chapter-list')]/li/a",
+  "chapterContent": "//div[@id='mlfy_main_text']",
+  "referer": "https://www.linovelib.com",
+  "antiCrawlerConfig": {
+    "enabled": true,
+    "captchaType": 1,
+    "captchaImage": "//img[@id='search-captcha']",
+    "captchaInput": "//input[@id='search_code']",
+    "captchaButton": "//button[contains(text(),'验证并搜索')]",
+    "captchaDetectType": 2,
+    "captchaDetectValue": "搜索验证"
+  }
+}
