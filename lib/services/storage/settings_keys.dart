@@ -13,6 +13,7 @@ enum SettingGroup {
   collect,
   sync,
   update,
+  novel,
   misc,
 }
 
@@ -581,6 +582,39 @@ class SettingsKeys {
     group: SettingGroup.player,
   );
 
+  // 轻小说阅读器偏好。单独成组（SettingGroup.novel），方便以后在设置页
+  // 里给一个「恢复默认阅读外观」的入口，而不用逐条列举。
+  static const novelFontSize = SettingKey<double>(
+    'novelFontSize',
+    18,
+    group: SettingGroup.novel,
+  );
+  static const novelLineHeight = SettingKey<double>(
+    'novelLineHeight',
+    1.8,
+    group: SettingGroup.novel,
+  );
+  static const novelMargin = SettingKey<double>(
+    'novelMargin',
+    20,
+    group: SettingGroup.novel,
+  );
+  static const novelFontFamily = SettingKey<String>(
+    'novelFontFamily',
+    'system',
+    group: SettingGroup.novel,
+  );
+  static const novelTheme = SettingKey<String>(
+    'novelTheme',
+    'paper',
+    group: SettingGroup.novel,
+  );
+  static const novelIndent = SettingKey<bool>(
+    'novelIndent',
+    true,
+    group: SettingGroup.novel,
+  );
+
   static final List<SettingKey<Object?>> all = [
     hAenable,
     hardwareDecoder,
@@ -688,6 +722,12 @@ class SettingsKeys {
     playerControllerLayerDisappearTime,
     defaultVolume,
     playerMuted,
+    novelFontSize,
+    novelLineHeight,
+    novelMargin,
+    novelFontFamily,
+    novelTheme,
+    novelIndent,
   ];
 
   static List<SettingKey<Object?>> byGroup(SettingGroup group) {
