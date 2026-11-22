@@ -39,6 +39,12 @@ class Plugin {
   String searchList;
   String searchName;
   String searchResult;
+
+  /// 小说扩展：搜索结果封面图的选择器。
+  ///
+  /// 动漫规则没有这个字段（列表用海报，不靠规则抓）。轻小说列表要显示封面，
+  /// 所以这里补一个，取 img 的 src / data-src / data-original。
+  String searchCover;
   String chapterRoads;
   String chapterResult;
 
@@ -57,6 +63,15 @@ class Plugin {
   ///
   /// 变换规则：去掉末尾的 `.html` 再拼上本字段（见 [catalogUrlFor]）。
   String chapterCatalog;
+
+  /// 小说扩展：排行榜页 URL（@keyword 不需要，榜单没有关键词）。
+  ///
+  /// 空串表示这条规则不支持「进 tab 直接看榜单」，主页会退化成空列表等用户搜。
+  String rankingURL;
+  String rankingList;
+  String rankingName;
+  String rankingResult;
+  String rankingCover;
   String referer;
   String searchMode;
   String chapterMode;
@@ -81,10 +96,16 @@ class Plugin {
     required this.searchList,
     required this.searchName,
     required this.searchResult,
+    this.searchCover = '',
     required this.chapterRoads,
     required this.chapterResult,
     this.chapterContent = '',
     this.chapterCatalog = '',
+    this.rankingURL = '',
+    this.rankingList = '',
+    this.rankingName = '',
+    this.rankingResult = '',
+    this.rankingCover = '',
     required this.referer,
     this.searchMode = RuleMode.xpath,
     this.chapterMode = RuleMode.xpath,
@@ -113,10 +134,16 @@ class Plugin {
       searchList: json['searchList'] as String? ?? '',
       searchName: json['searchName'] as String? ?? '',
       searchResult: json['searchResult'] as String? ?? '',
+      searchCover: json['searchCover'] as String? ?? '',
       chapterRoads: json['chapterRoads'] as String? ?? '',
       chapterResult: json['chapterResult'] as String? ?? '',
       chapterContent: json['chapterContent'] as String? ?? '',
       chapterCatalog: json['chapterCatalog'] as String? ?? '',
+      rankingURL: json['rankingURL'] as String? ?? '',
+      rankingList: json['rankingList'] as String? ?? '',
+      rankingName: json['rankingName'] as String? ?? '',
+      rankingResult: json['rankingResult'] as String? ?? '',
+      rankingCover: json['rankingCover'] as String? ?? '',
       referer: json['referer'] ?? '',
       searchMode: RuleMode.normalize(json['searchMode']),
       chapterMode: RuleMode.normalize(json['chapterMode']),
@@ -156,10 +183,16 @@ class Plugin {
       searchList: '',
       searchName: '',
       searchResult: '',
+      searchCover: '',
       chapterRoads: '',
       chapterResult: '',
       chapterContent: '',
       chapterCatalog: '',
+      rankingURL: '',
+      rankingList: '',
+      rankingName: '',
+      rankingResult: '',
+      rankingCover: '',
       referer: '',
       searchMode: RuleMode.xpath,
       chapterMode: RuleMode.xpath,
@@ -187,12 +220,18 @@ class Plugin {
       'searchList': searchList,
       'searchName': searchName,
       'searchResult': searchResult,
+      if (searchCover.isNotEmpty) 'searchCover': searchCover,
       'chapterRoads': chapterRoads,
       'chapterResult': chapterResult,
       // 只在非空时写出：老规则 JSON 不该被塞一个空字段，
       // 否则导出/再导入会多出一堆无意义的键。
       if (chapterContent.isNotEmpty) 'chapterContent': chapterContent,
       if (chapterCatalog.isNotEmpty) 'chapterCatalog': chapterCatalog,
+      if (rankingURL.isNotEmpty) 'rankingURL': rankingURL,
+      if (rankingList.isNotEmpty) 'rankingList': rankingList,
+      if (rankingName.isNotEmpty) 'rankingName': rankingName,
+      if (rankingResult.isNotEmpty) 'rankingResult': rankingResult,
+      if (rankingCover.isNotEmpty) 'rankingCover': rankingCover,
       'referer': referer,
       'searchMode': searchMode,
       'chapterMode': chapterMode,
@@ -221,6 +260,7 @@ class Plugin {
         searchList: searchList,
         searchName: searchName,
         searchResult: searchResult,
+        searchCover: searchCover,
         chapterRoads: chapterRoads,
         chapterResult: chapterResult,
         chapterContent: chapterContent,
@@ -288,6 +328,48 @@ class Plugin {
       if (shouldRethrow) rethrow;
       return PluginSearchResponse(pluginName: name, data: <SearchItem>[]);
     }
+  }
+
+  /// 榜单用的副本：把搜索通道指向排行榜页。
+  ///
+  /// 为什么需要它：linovelib 的搜索接口要过图片验证码，而「进入 tab 就想看到
+  /// 书」不能每次都弹验证码。排行榜页免验证、结构是另一套（rank_d_list 而不是
+  /// search-result-list），所以用一份只换 searchURL / searchList / searchName /
+  /// searchResult / searchCover 的副本去抓，其它字段（章节、正文）完全复用。
+  ///
+  /// 规则里没写 rankingURL 时原样返回自己 —— 不支持榜单的规则照常工作。
+  Plugin forRanking() {
+    final rankingUrl = rankingURL.trim();
+    if (rankingUrl.isEmpty) return this;
+    return Plugin(
+      api: api,
+      type: type,
+      name: name,
+      version: version,
+      muliSources: muliSources,
+      useWebview: useWebview,
+      useNativePlayer: useNativePlayer,
+      usePost: usePost,
+      useLegacyParser: useLegacyParser,
+      adBlocker: adBlocker,
+      userAgent: userAgent,
+      baseUrl: baseUrl,
+      searchURL: rankingUrl,
+      searchList: rankingList.trim().isEmpty ? searchList : rankingList,
+      searchName: rankingName.trim().isEmpty ? searchName : rankingName,
+      searchResult: rankingResult.trim().isEmpty ? searchResult : rankingResult,
+      searchCover: rankingCover.trim().isEmpty ? searchCover : rankingCover,
+      chapterRoads: chapterRoads,
+      chapterResult: chapterResult,
+      chapterContent: chapterContent,
+      chapterCatalog: chapterCatalog,
+      referer: referer,
+      searchMode: RuleMode.xpath,
+      chapterMode: chapterMode,
+      searchApiConfig: searchApiConfig,
+      chapterApiConfig: chapterApiConfig,
+      antiCrawlerConfig: antiCrawlerConfig,
+    );
   }
 
   /// 把详情页 URL 换成目录页 URL。
