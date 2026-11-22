@@ -41,6 +41,13 @@ class Plugin {
   String searchResult;
   String chapterRoads;
   String chapterResult;
+
+  /// 小说扩展：章节正文的 XPath 选择器。
+  ///
+  /// KazumiRules 里没有这个字段（18 条规则全是 anime），它是本 fork 为
+  /// 轻小说加的。空串表示「这条规则不提供正文」，此时阅读器退回整页文本
+  /// 并提示用户补选择器 —— 而不是直接报错，因为整页文本至少能读。
+  String chapterContent;
   String referer;
   String searchMode;
   String chapterMode;
@@ -67,6 +74,7 @@ class Plugin {
     required this.searchResult,
     required this.chapterRoads,
     required this.chapterResult,
+    this.chapterContent = '',
     required this.referer,
     this.searchMode = RuleMode.xpath,
     this.chapterMode = RuleMode.xpath,
@@ -97,6 +105,7 @@ class Plugin {
       searchResult: json['searchResult'] as String? ?? '',
       chapterRoads: json['chapterRoads'] as String? ?? '',
       chapterResult: json['chapterResult'] as String? ?? '',
+      chapterContent: json['chapterContent'] as String? ?? '',
       referer: json['referer'] ?? '',
       searchMode: RuleMode.normalize(json['searchMode']),
       chapterMode: RuleMode.normalize(json['chapterMode']),
@@ -138,6 +147,7 @@ class Plugin {
       searchResult: '',
       chapterRoads: '',
       chapterResult: '',
+      chapterContent: '',
       referer: '',
       searchMode: RuleMode.xpath,
       chapterMode: RuleMode.xpath,
@@ -167,6 +177,9 @@ class Plugin {
       'searchResult': searchResult,
       'chapterRoads': chapterRoads,
       'chapterResult': chapterResult,
+      // 只在非空时写出：老规则 JSON 不该被塞一个空字段，
+      // 否则导出/再导入会多出一堆无意义的键。
+      if (chapterContent.isNotEmpty) 'chapterContent': chapterContent,
       'referer': referer,
       'searchMode': searchMode,
       'chapterMode': chapterMode,
@@ -197,10 +210,26 @@ class Plugin {
         searchResult: searchResult,
         chapterRoads: chapterRoads,
         chapterResult: chapterResult,
+        chapterContent: chapterContent,
         searchApiConfig: searchApiConfig,
         chapterApiConfig: chapterApiConfig,
         antiCrawlerConfig: antiCrawlerConfig,
       );
+
+  /// 小说：抓一章正文。返回原始 HTML，由 NovelContentExtractor 抽文本。
+  Future<String> fetchNovelChapter(
+    String chapterUrl, {
+    RuleCancelToken? cancelToken,
+  }) {
+    return _ruleEngine.fetchChapterHtml(
+      _executionConfig,
+      chapterUrl,
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// 这条规则能不能当小说源用：有正文选择器、或者至少是个 novel 类型的规则。
+  bool get supportsNovel => type == 'novel' || chapterContent.isNotEmpty;
 
   Future<RuleSearchTrace> traceSearch(
     String keyword, {
