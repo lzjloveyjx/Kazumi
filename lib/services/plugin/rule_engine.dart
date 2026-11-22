@@ -8,6 +8,7 @@ import 'package:kazumi/services/plugin/api_rule_strategy.dart';
 import 'package:kazumi/services/plugin/plugin_cookie_manager.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart';
 import 'package:kazumi/services/plugin/xpath_rule_strategy.dart';
+import 'package:kazumi/utils/http_headers.dart';
 
 abstract interface class RuleRequestExecutor {
   Future<String> execute(
@@ -338,6 +339,10 @@ class _DefaultRuleRequestExecutor implements RuleRequestExecutor {
     // with ours instead of being sent as a second, conflicting header.
     final headers = <String, dynamic>{
       'referer': '${config.baseUrl}/',
+      // 站点会按 Accept-Language 决定返回什么内容 —— linovelib 在没有这个头
+      // 时**只吐半章正文**（末尾插一句「內容加載失敗！請刷新或更換瀏覽器」），
+      // 加了 zh-CN 才是完整章节。这不是可选的礼貌头，是必需参数。
+      'accept-language': getRandomAcceptedLanguage(),
       if (cookieHeader.isNotEmpty) 'cookie': cookieHeader,
       for (final entry in request.headers.entries)
         entry.key.toLowerCase(): entry.value,
@@ -346,6 +351,9 @@ class _DefaultRuleRequestExecutor implements RuleRequestExecutor {
       // would make the site serve the challenge page again.
       if (verifiedUserAgent != null) 'user-agent': verifiedUserAgent,
     };
+    // 规则没写 userAgent 时补一个真机 UA。之前这里不给，Dio 会发它自己的
+    // 默认值，部分站点（同样包括 linovelib）会把那当成爬虫，直接返回半章。
+    headers.putIfAbsent('user-agent', () => getRandomUA());
     if (request.method == 'POST') {
       switch (request.bodyType) {
         case ApiBodyType.json:
