@@ -159,6 +159,8 @@ flutter:
   assets:
     - assets/images/
     - assets/shaders/
+    # 内置小说规则（KazumiRules 官方仓库没有 novel 类型，这里补上）
+    - assets/rules/novel/
     - assets/images/logo/
     - assets/statements/
     - licenses/ech_http/
