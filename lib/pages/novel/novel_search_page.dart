@@ -5,7 +5,8 @@ import 'package:kazumi/bean/appbar/sys_app_bar.dart';
 import 'package:kazumi/bean/widget/empty_state_widget.dart';
 import 'package:kazumi/bean/widget/loading_indicator.dart';
 import 'package:kazumi/modules/search/plugin_search_module.dart';
-import 'package:kazumi/pages/novel/novel_reader_page.dart';
+import 'package:kazumi/bean/widget/novel_cover_image.dart';
+import 'package:kazumi/pages/novel/novel_book_page.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
@@ -235,12 +236,16 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
         setState(() => _error = '这本书没有解析出任何章节：规则可能失效了。');
         return;
       }
-      await Navigator.of(context).push(
+      // 用 rootNavigator：小说 tab 的 RouterOutlet 自带嵌套 Navigator，
+      // 默认 Navigator.of(context) 会把详情页压在 tab 里，底部导航栏仍在。
+      // 详情/阅读都该盖住整个 shell（和动漫的 /info/ 行为一致）。
+      await Navigator.of(context, rootNavigator: true).push(
         MaterialPageRoute(
-          builder: (_) => NovelReaderPage(
+          builder: (_) => NovelBookPage(
             plugin: plugin,
             bookTitle: item.name,
             roads: roads,
+            coverUrl: item.cover,
           ),
         ),
       );
@@ -400,32 +405,9 @@ class _BookCard extends StatelessWidget {
                       alignment: Alignment.center,
                       child: const Icon(Icons.menu_book_outlined, size: 28),
                     )
-                  : Image.network(
-                      item.cover,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      // 图床对 Referer 敏感度不一（wenku8 的 img 站实测
-                      // 带不带都 200），带上规则里声明的 referer 更稳妥。
-                      headers: referer.isEmpty
-                          ? const {}
-                          : {'referer': referer},
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return Container(
-                          color: theme.colorScheme.surfaceContainerHighest,
-                          alignment: Alignment.center,
-                          child: const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
-                      },
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.broken_image_outlined, size: 24),
-                      ),
+                  : NovelCoverImage(
+                      url: item.cover,
+                      referer: referer,
                     ),
             ),
           ),
