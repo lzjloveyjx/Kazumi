@@ -63,6 +63,7 @@ class RuleExecutionConfig {
     required this.searchList,
     required this.searchName,
     required this.searchResult,
+    this.searchCover = '',
     required this.chapterRoads,
     required this.chapterResult,
     this.chapterContent = '',
@@ -80,6 +81,10 @@ class RuleExecutionConfig {
   final String searchList;
   final String searchName;
   final String searchResult;
+
+  /// 小说扩展：搜索结果的封面图选择器（取 img 的 src/data-src）。
+  /// 空串表示该规则不提供封面。
+  final String searchCover;
   final String chapterRoads;
   final String chapterResult;
 
