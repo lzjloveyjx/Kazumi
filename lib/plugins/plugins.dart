@@ -64,6 +64,22 @@ class Plugin {
   /// 变换规则：去掉末尾的 `.html` 再拼上本字段（见 [catalogUrlFor]）。
   String chapterCatalog;
 
+  /// 小说扩展：随包内置的书名索引（assets 路径）。
+  ///
+  /// 有些站点的搜索必须登录（wenku8 就是），但书页和正文完全免登录。这种
+  /// 情况下把整站书名索引打进包，搜索在本地做，命中后再去站点取目录和正文
+  /// —— 既能搜到全站每一本，又不需要账号。
+  ///
+  /// 空串表示走规则引擎的在线搜索。
+  String novelIndexAsset;
+
+  /// 小说扩展：目录页模板，例如 `/novel/{cat}/{aid}/index.htm`。
+  ///
+  /// 用在「详情页 URL 和目录页 URL 结构完全不同」的站点。{aid} 从详情 URL
+  /// 里的 `/book/(\d+)` 取，{cat} 是 aid 除以 1000 的整数部分（wenku8 的
+  /// 目录分片规则）。空串时退回 [chapterCatalog] 的简单后缀替换。
+  String catalogTemplate;
+
   /// 小说扩展：排行榜页 URL（@keyword 不需要，榜单没有关键词）。
   ///
   /// 空串表示这条规则不支持「进 tab 直接看榜单」，主页会退化成空列表等用户搜。
@@ -101,6 +117,8 @@ class Plugin {
     required this.chapterResult,
     this.chapterContent = '',
     this.chapterCatalog = '',
+    this.novelIndexAsset = '',
+    this.catalogTemplate = '',
     this.rankingURL = '',
     this.rankingList = '',
     this.rankingName = '',
@@ -139,6 +157,8 @@ class Plugin {
       chapterResult: json['chapterResult'] as String? ?? '',
       chapterContent: json['chapterContent'] as String? ?? '',
       chapterCatalog: json['chapterCatalog'] as String? ?? '',
+      novelIndexAsset: json['novelIndexAsset'] as String? ?? '',
+      catalogTemplate: json['catalogTemplate'] as String? ?? '',
       rankingURL: json['rankingURL'] as String? ?? '',
       rankingList: json['rankingList'] as String? ?? '',
       rankingName: json['rankingName'] as String? ?? '',
@@ -188,6 +208,8 @@ class Plugin {
       chapterResult: '',
       chapterContent: '',
       chapterCatalog: '',
+      novelIndexAsset: '',
+      catalogTemplate: '',
       rankingURL: '',
       rankingList: '',
       rankingName: '',
@@ -227,6 +249,8 @@ class Plugin {
       // 否则导出/再导入会多出一堆无意义的键。
       if (chapterContent.isNotEmpty) 'chapterContent': chapterContent,
       if (chapterCatalog.isNotEmpty) 'chapterCatalog': chapterCatalog,
+      if (novelIndexAsset.isNotEmpty) 'novelIndexAsset': novelIndexAsset,
+      if (catalogTemplate.isNotEmpty) 'catalogTemplate': catalogTemplate,
       if (rankingURL.isNotEmpty) 'rankingURL': rankingURL,
       if (rankingList.isNotEmpty) 'rankingList': rankingList,
       if (rankingName.isNotEmpty) 'rankingName': rankingName,
@@ -363,6 +387,8 @@ class Plugin {
       chapterResult: chapterResult,
       chapterContent: chapterContent,
       chapterCatalog: chapterCatalog,
+      novelIndexAsset: novelIndexAsset,
+      catalogTemplate: catalogTemplate,
       referer: referer,
       searchMode: RuleMode.xpath,
       chapterMode: chapterMode,
@@ -378,6 +404,22 @@ class Plugin {
   /// `.html`，再拼上后缀 —— linovelib 的 `/novel/5491.html` →
   /// `/novel/5491/catalog`。
   String catalogUrlFor(String detailUrl) {
+    // 模板优先：有些站点的目录 URL 和详情 URL 毫无共同前缀，只能按规则
+    // 从 aid 拼（wenku8 的 /book/6.htm → /novel/0/6/index.htm）。
+    final template = catalogTemplate.trim();
+    if (template.isNotEmpty) {
+      final aid = RegExp(r'/book/(\d+)').firstMatch(detailUrl)?.group(1);
+      if (aid != null && aid.isNotEmpty) {
+        final cat = (int.parse(aid) ~/ 1000).toString();
+        final path = template
+            .replaceAll('{aid}', aid)
+            .replaceAll('{cat}', cat);
+        final base = baseUrl.endsWith('/')
+            ? baseUrl.substring(0, baseUrl.length - 1)
+            : baseUrl;
+        return path.startsWith('http') ? path : base + path;
+      }
+    }
     final suffix = chapterCatalog.trim();
     if (suffix.isEmpty) return detailUrl;
     var url = detailUrl.trim();
