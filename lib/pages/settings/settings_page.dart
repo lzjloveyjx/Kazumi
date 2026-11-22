@@ -86,6 +86,12 @@ const List<_SettingsGroup> _settingsGroups = [
         path: '/settings/interface',
       ),
       _SettingsCategory(
+        label: '阅读设置',
+        description: '字号、字体与阅读背景',
+        icon: Icons.chrome_reader_mode_rounded,
+        path: '/settings/novel',
+      ),
+      _SettingsCategory(
         label: '同步设置',
         description: '追番状态与多设备同步',
         icon: Icons.cloud_rounded,
