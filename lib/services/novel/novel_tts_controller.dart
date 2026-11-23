@@ -42,6 +42,13 @@ class NovelTtsController {
   /// 当前章的句子表（切分后）。
   List<TtsSentence> _sentences = const [];
 
+  /// 当前章拼好的整章文本（和 _sentences 的字符偏移对齐）。
+  /// 阅读页长按某段时，用该段在整章的起始偏移反查从第几句开始读。
+  String _fullText = '';
+
+  /// 整章文本（只读），供定位使用。
+  String get fullText => _fullText;
+
   int _index = 0;
   TtsPlaybackState _state = TtsPlaybackState.idle;
   bool _initialized = false;
@@ -192,6 +199,7 @@ class NovelTtsController {
   }) async {
     await _ensureInit();
     final text = _joinParagraphs(paragraphs, indent: indent);
+    _fullText = text;
     _sentences = splitSentences(text);
     _index = fromSentence.clamp(0, (_sentences.length - 1).clamp(0, 1 << 30));
     _emitSentence();
@@ -220,6 +228,16 @@ class NovelTtsController {
   /// 就会读出一个孤零零的引号。
   ///
   /// 太短的片段（< 2 字）并进前一句，避免一个字一句地念，听起来很怪。
+  /// 整章字符偏移 → 第几句。用于「从指定段落开始朗读」。
+  /// 取第一个 end > offset 的句子；找不到就返回 0。
+  int sentenceIndexAt(int offset) {
+    if (_sentences.isEmpty) return 0;
+    for (var i = 0; i < _sentences.length; i++) {
+      if (_sentences[i].end > offset) return i;
+    }
+    return 0;
+  }
+
   static List<TtsSentence> splitSentences(String text) {
     if (text.trim().isEmpty) return const [];
 

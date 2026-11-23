@@ -59,6 +59,13 @@ class NovelTtsPlayer {
   TtsPlaybackState get state => _state;
   int get sentenceIndex => _index;
   List<TtsSentence> get sentences => _sentences;
+
+  /// 整章文本（只读），供阅读页把长按的段落定位到句子。
+  String get fullText => _system.fullText;
+
+  /// 整章字符偏移 → 第几句。
+  int sentenceIndexAt(int offset) => _system.sentenceIndexAt(offset);
+
   TtsEngineKind get engineKind => _kind;
   bool get isActive => _state != TtsPlaybackState.idle;
   LocalTtsEngine get engine => _engine;

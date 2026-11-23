@@ -371,11 +371,22 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   }
 
   Future<void> _startTts() async {
-    _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
+    // 点耳机默认从「当前页第一段」开始，而不是上次停在哪句。
+    // 必须先 load 建好本章句子表，再用字符偏移反查句子下标。
+    final pageStart = _currentPageCharOffset();
+    await _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
     await _tts.load(
       paragraphs: _controller.paragraphs,
       indent: _prefs.indent,
-      fromSentence: _ttsSentenceIndex,
+      fromSentence: 0,
+    );
+    final from = pageStart >= 0
+        ? _tts.sentenceIndexAt(pageStart)
+        : _ttsSentenceIndex;
+    await _tts.load(
+      paragraphs: _controller.paragraphs,
+      indent: _prefs.indent,
+      fromSentence: from,
     );
     _tts.setSpeed(_ttsSpeed);
     // 系统通道的引擎/音色（MultiTTS 等第三方引擎走这里）。
@@ -388,6 +399,94 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     // 不再询问解压内置神经模型——用户走系统通道，用不到它。
     _tts.useSystem();
     await _tts.play();
+  }
+
+  /// 当前页第一段在整章文本里的字符偏移；定位不到返回 -1。
+  int _currentPageCharOffset() {
+    final blocks = NovelPaginator()
+        .blocksOf(_controller.paragraphs, indent: _prefs.indent);
+    if (blocks.isEmpty) return -1;
+    int pageFirst;
+    if (_prefs.pagedMode) {
+      if (_pages.isEmpty || _pageIndex < 0 || _pageIndex >= _pages.length) {
+        return -1;
+      }
+      pageFirst = _pages[_pageIndex].firstParagraphIndex;
+    } else {
+      pageFirst = 0; // 滚动模式从头读
+    }
+    if (pageFirst < 0 || pageFirst >= blocks.length) return -1;
+    // 累加前面各段长度（+1 是段间换行，和 TTS 拼文本的规则一致）。
+    var offset = 0;
+    for (var i = 0; i < pageFirst; i++) {
+      if (blocks[i].isImage) continue;
+      offset += blocks[i].text.length + 1;
+    }
+    return offset;
+  }
+
+  /// 从指定段落开始朗读（长按段落触发）。[blockIndex] 是整章块下标。
+  Future<void> _startTtsFromBlock(int blockIndex) async {
+    final blocks = NovelPaginator()
+        .blocksOf(_controller.paragraphs, indent: _prefs.indent);
+    if (blockIndex < 0 || blockIndex >= blocks.length) return;
+    var offset = 0;
+    for (var i = 0; i < blockIndex; i++) {
+      if (blocks[i].isImage) continue;
+      offset += blocks[i].text.length + 1;
+    }
+    await _tts.stop();
+    if (!mounted) return;
+    // 先 load 一次建好本章句子表，再把字符偏移换成句子下标。
+    await _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
+    await _tts.load(
+      paragraphs: _controller.paragraphs,
+      indent: _prefs.indent,
+      fromSentence: 0,
+    );
+    final sentence = _tts.sentenceIndexAt(offset);
+    setState(() => _ttsSentenceIndex = sentence);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('从这一段开始朗读'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
+    await _startTtsFromSentence(sentence);
+  }
+
+  /// 和 _startTts 一样，但强制从指定句子开始（不走「当前页默认」逻辑）。
+  Future<void> _startTtsFromSentence(int sentence) async {
+    await _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
+    await _tts.load(
+      paragraphs: _controller.paragraphs,
+      indent: _prefs.indent,
+      fromSentence: sentence,
+    );
+    _tts.setSpeed(_ttsSpeed);
+    _tts.setSystemEngine(
+      package: _prefs.ttsEnginePackage,
+      voice: _prefs.ttsEngineVoice,
+    );
+    _tts.useSystem();
+    await _tts.play();
+  }
+
+  /// 页内块下标 → 整章块下标（靠块文本匹配）。
+  int _globalBlockIndex(int pageIndex, int localBlock) {
+    if (pageIndex < 0 || pageIndex >= _pages.length) return -1;
+    final pageBlocks = _pages[pageIndex].blocks;
+    if (localBlock < 0 || localBlock >= pageBlocks.length) return -1;
+    final target = pageBlocks[localBlock];
+    if (target.isImage) return -1;
+    final all = NovelPaginator()
+        .blocksOf(_controller.paragraphs, indent: _prefs.indent);
+    for (var i = 0; i < all.length; i++) {
+      if (!all[i].isImage && all[i].text == target.text) return i;
+    }
+    return -1;
   }
 
   /// 语速倍率。prefs 里存的是系统 TTS 的 rate（0.2~1.0），
@@ -895,6 +994,10 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
         referer: _imageReferer,
         maxHeight: height,
         highlight: _highlightForPage(index, _pages[index]),
+        onBlockLongPress: (localBlock) {
+          final global = _globalBlockIndex(index, localBlock);
+          if (global >= 0) _startTtsFromBlock(global);
+        },
       ),
     );
   }
@@ -939,6 +1042,16 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                   block: block,
                   prefs: _prefs,
                   referer: _imageReferer,
+                  onLongPress: () {
+                    final all = NovelPaginator().blocksOf(
+                      _controller.paragraphs,
+                      indent: _prefs.indent,
+                    );
+                    final idx = all.indexWhere(
+                      (b) => !b.isImage && b.text == block.text,
+                    );
+                    if (idx >= 0) _startTtsFromBlock(idx);
+                  },
                 ),
               ),
             const SizedBox(height: 12),
@@ -1100,12 +1213,16 @@ class _PageView extends StatelessWidget {
     required this.referer,
     required this.maxHeight,
     this.highlight,
+    this.onBlockLongPress,
   });
 
   final NovelPage page;
   final NovelReaderPrefs prefs;
   final String referer;
   final double maxHeight;
+
+  /// 长按某一段（页内块下标）开始朗读。
+  final void Function(int blockIndex)? onBlockLongPress;
 
   /// 朗读高亮：(页内块下标, 块内起, 块内止)。
   final ({int block, int start, int end})? highlight;
@@ -1127,6 +1244,9 @@ class _PageView extends StatelessWidget {
                   referer: referer,
                   highlight:
                       highlight != null && highlight!.block == i ? highlight : null,
+                  onLongPress: onBlockLongPress == null
+                      ? null
+                      : () => onBlockLongPress!(i),
                 ),
               ),
           ],
@@ -1142,12 +1262,25 @@ class _BlockView extends StatelessWidget {
     required this.prefs,
     required this.referer,
     this.highlight,
+    this.onLongPress,
   });
 
   final NovelBlock block;
   final NovelReaderPrefs prefs;
   final String referer;
   final ({int block, int start, int end})? highlight;
+  final VoidCallback? onLongPress;
+
+  Widget _wrap(Widget child) {
+    final onLong = onLongPress;
+    return onLong == null
+        ? child
+        : GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onLongPress: onLong,
+            child: child,
+          );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1161,7 +1294,7 @@ class _BlockView extends StatelessWidget {
 
     final h = highlight;
     if (h == null) {
-      return Text(block.text, style: prefs.textStyle);
+      return _wrap(Text(block.text, style: prefs.textStyle));
     }
 
     // 用 TextSpan 给正在朗读的那一段上底色，而不是整段换样式：
@@ -1170,10 +1303,10 @@ class _BlockView extends StatelessWidget {
     final start = h.start.clamp(0, text.length);
     final end = h.end.clamp(start, text.length);
     if (start == end) {
-      return Text(text, style: prefs.textStyle);
+      return _wrap(Text(text, style: prefs.textStyle));
     }
     final mark = NovelHighlightColors.of(context);
-    return Text.rich(
+    return _wrap(Text.rich(
       TextSpan(
         style: prefs.textStyle,
         children: [
@@ -1185,7 +1318,7 @@ class _BlockView extends StatelessWidget {
           if (end < text.length) TextSpan(text: text.substring(end)),
         ],
       ),
-    );
+    ));
   }
 }
 
