@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_modular/flutter_modular.dart';
 
 import 'package:kazumi/bean/appbar/sys_app_bar.dart';
 import 'package:kazumi/bean/widget/empty_state_widget.dart';
@@ -6,6 +7,7 @@ import 'package:kazumi/bean/widget/novel_cover_image.dart';
 import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/pages/novel/novel_reader_page.dart';
 import 'package:kazumi/plugins/plugins.dart';
+import 'package:kazumi/repositories/novel_shelf_repository.dart';
 
 /// 书籍详情页：封面 + 书名 + 章节目录。
 ///
@@ -15,7 +17,7 @@ import 'package:kazumi/plugins/plugins.dart';
 ///
 /// 章节数据直接用规则引擎解析出来的 [Road]（一条 road = 一个线路/一卷），
 /// 不再自己抓一遍页面：解析逻辑已经在规则引擎里，重复实现会跟规则脱节。
-class NovelBookPage extends StatelessWidget {
+class NovelBookPage extends StatefulWidget {
   const NovelBookPage({
     super.key,
     required this.plugin,
@@ -23,6 +25,9 @@ class NovelBookPage extends StatelessWidget {
     required this.roads,
     this.coverUrl = '',
     this.author = '',
+    this.bookKey = '',
+    this.initialRoadIndex = 0,
+    this.initialChapterIndex = 0,
   });
 
   final Plugin plugin;
@@ -30,6 +35,55 @@ class NovelBookPage extends StatelessWidget {
   final List<Road> roads;
   final String coverUrl;
   final String author;
+
+  /// 书籍身份（详情页 URL）。空串表示调用方没给，此时不记录书架/进度。
+  final String bookKey;
+
+  /// 从哪一章开始读。来自书架/历史时是上次的位置，否则是 0。
+  final int initialRoadIndex;
+  final int initialChapterIndex;
+
+  @override
+  State<NovelBookPage> createState() => _NovelBookPageState();
+}
+
+class _NovelBookPageState extends State<NovelBookPage> {
+  late final NovelShelfRepository _repo = inject<NovelShelfRepository>();
+  bool _onShelf = false;
+
+  Plugin get plugin => widget.plugin;
+  String get bookTitle => widget.bookTitle;
+  List<Road> get roads => widget.roads;
+  String get coverUrl => widget.coverUrl;
+  String get author => widget.author;
+  String get bookKey => widget.bookKey;
+
+  @override
+  void initState() {
+    super.initState();
+    if (bookKey.isNotEmpty) {
+      _onShelf = _repo.isOnShelf(plugin.name, bookKey);
+    }
+  }
+
+  Future<void> _toggleShelf() async {
+    if (bookKey.isEmpty) return;
+    final now = await _repo.toggleShelf(
+      pluginName: plugin.name,
+      bookKey: bookKey,
+      title: bookTitle,
+      cover: coverUrl,
+      author: author,
+    );
+    if (!mounted) return;
+    setState(() => _onShelf = now);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(now ? '已加入书架' : '已移出书架'),
+        duration: const Duration(milliseconds: 1200),
+      ),
+    );
+  }
 
   /// 图床防盗链用的 Referer。
   String get _referer {
@@ -40,11 +94,29 @@ class NovelBookPage extends StatelessWidget {
   int get _totalChapters =>
       roads.fold<int>(0, (sum, road) => sum + road.data.length);
 
+  /// 有没有读过的进度（决定「继续阅读」按钮显不显示）。
+  bool get _hasProgress =>
+      widget.initialRoadIndex > 0 || widget.initialChapterIndex > 0;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: SysAppBar(title: Text(bookTitle, overflow: TextOverflow.ellipsis)),
+      appBar: SysAppBar(
+        title: Text(bookTitle, overflow: TextOverflow.ellipsis),
+        actions: [
+          if (bookKey.isNotEmpty)
+            IconButton(
+              tooltip: _onShelf ? '移出书架' : '加入书架',
+              onPressed: _toggleShelf,
+              icon: Icon(
+                _onShelf
+                    ? Icons.bookmark_rounded
+                    : Icons.bookmark_border_rounded,
+              ),
+            ),
+        ],
+      ),
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
@@ -92,10 +164,28 @@ class NovelBookPage extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 14),
-                        FilledButton.tonalIcon(
-                          onPressed: () => _openReader(context, 0, 0),
-                          icon: const Icon(Icons.play_arrow_rounded, size: 20),
-                          label: const Text('从第一章开始'),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (_hasProgress)
+                              FilledButton.icon(
+                                onPressed: () => _openReader(
+                                  context,
+                                  widget.initialRoadIndex,
+                                  widget.initialChapterIndex,
+                                ),
+                                icon: const Icon(Icons.play_arrow_rounded,
+                                    size: 20),
+                                label: const Text('继续阅读'),
+                              ),
+                            FilledButton.tonalIcon(
+                              onPressed: () => _openReader(context, 0, 0),
+                              icon: const Icon(Icons.menu_book_rounded,
+                                  size: 20),
+                              label: const Text('从第一章开始'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -184,6 +274,8 @@ class NovelBookPage extends StatelessWidget {
           plugin: plugin,
           bookTitle: bookTitle,
           roads: roads,
+          coverUrl: coverUrl,
+          bookKey: bookKey,
           initialRoadIndex: roadIndex,
           initialChapterIndex: chapterIndex,
         ),
