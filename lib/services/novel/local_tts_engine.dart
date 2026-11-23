@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
@@ -60,6 +61,23 @@ class LocalTtsEngine {
         tokensPath: '${dir.path}/tokens.txt',
         lexiconPath: '${dir.path}/lexicon.txt',
       );
+      handle.onAudio = (audio) {
+        // 先兑现等待中的合成请求，再通知上层播放 —— 顺序反了会让
+        // NovelTtsPlayer 在 completer 还没完成时就去读结果。
+        final completer = _pending.remove(audio.seq);
+        if (completer != null && !completer.isCompleted) {
+          completer.complete(audio);
+        }
+        onAudio?.call(audio);
+      };
+      handle.onError = (message) {
+        // 出错时把当前所有等待中的请求都失败掉，否则它们会挂到超时。
+        for (final c in _pending.values.toList()) {
+          if (!c.isCompleted) c.completeError(Exception(message));
+        }
+        _pending.clear();
+        onError?.call(message);
+      };
       await handle.start();
       _handle = handle;
       _ready = true;
@@ -83,23 +101,11 @@ class LocalTtsEngine {
     _pending[seq] = completer;
     handle.request(seq: seq, text: text, speed: speed);
     try {
-      return await completer.future.timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          _pending.remove(seq);
-          return null;
-        },
-      );
+      return await completer.future.timeout(const Duration(seconds: 45));
     } catch (_) {
       _pending.remove(seq);
       return null;
     }
-  }
-
-  void _onAudio(TtsAudio audio) {
-    final c = _pending[audio.seq];
-    if (c != null && !c.isCompleted) c.complete(audio);
-    _pending.remove(audio.seq);
   }
 
   Future<void> dispose() async {
