@@ -9,6 +9,7 @@ import 'package:kazumi/modules/collect/collect_change_module.dart';
 import 'package:kazumi/modules/collect/collect_module.dart';
 import 'package:kazumi/modules/download/download_module.dart';
 import 'package:kazumi/modules/history/history_module.dart';
+import 'package:kazumi/modules/novel/novel_shelf_module.dart';
 import 'package:kazumi/modules/search/search_history_module.dart';
 
 extension HiveRegistrar on HiveInterface {
@@ -21,6 +22,7 @@ extension HiveRegistrar on HiveInterface {
     registerAdapter(DownloadRecordAdapter());
     registerAdapter(HistoryAdapter());
     registerAdapter(ProgressAdapter());
+    registerAdapter(NovelBookRecordAdapter());
     registerAdapter(SearchHistoryAdapter());
   }
 }
@@ -35,6 +37,7 @@ extension IsolatedHiveRegistrar on IsolatedHiveInterface {
     registerAdapter(DownloadRecordAdapter());
     registerAdapter(HistoryAdapter());
     registerAdapter(ProgressAdapter());
+    registerAdapter(NovelBookRecordAdapter());
     registerAdapter(SearchHistoryAdapter());
   }
 }
