@@ -107,6 +107,8 @@ class _NovelShelfPageState extends State<NovelShelfPage>
             bookKey: record.bookKey,
             initialRoadIndex: roadIndex,
             initialChapterIndex: chapterIndex,
+            initialPageIndex: record.lastPageIndex,
+            initialPageAnchor: record.lastPageAnchor,
           ),
         ),
       );
