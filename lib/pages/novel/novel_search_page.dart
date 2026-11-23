@@ -7,6 +7,7 @@ import 'package:kazumi/bean/widget/loading_indicator.dart';
 import 'package:kazumi/modules/search/plugin_search_module.dart';
 import 'package:kazumi/bean/widget/novel_cover_image.dart';
 import 'package:kazumi/pages/novel/novel_book_page.dart';
+import 'package:kazumi/pages/novel/novel_shelf_page.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
@@ -246,6 +247,9 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
             bookTitle: item.name,
             roads: roads,
             coverUrl: item.cover,
+            // 书籍身份用详情页 URL：它是这条搜索结果唯一稳定的标识，
+            // 书名会重名，aid 只在单站点内唯一。
+            bookKey: item.src,
           ),
         ),
       );
@@ -261,7 +265,18 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: SysAppBar(title: const Text('轻小说')),
+      appBar: SysAppBar(
+        title: const Text('轻小说'),
+        actions: [
+          IconButton(
+            tooltip: '书架',
+            onPressed: () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute(builder: (_) => const NovelShelfPage()),
+            ),
+            icon: const Icon(Icons.collections_bookmark_outlined),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
