@@ -99,5 +99,11 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- 小说朗读：Android 11+ 的包可见性限制会让 TextToSpeech 枚举不到
+             任何引擎，必须先声明要查询 TTS_SERVICE。不写这段的话 speak()
+             会静默失败（不报错，只是没声音）。 -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
+        </intent>
     </queries>
 </manifest>
