@@ -629,6 +629,23 @@ class SettingsKeys {
     group: SettingGroup.novel,
   );
 
+  /// 系统 TTS 引擎包名。空串表示用系统默认引擎。
+  ///
+  /// 装了 MultiTTS 这类第三方引擎时，把它的包名填进来就能用它的音色
+  /// （包括用户自己导入的微软/火山语音包）。
+  static const novelTtsEnginePackage = SettingKey<String>(
+    'novelTtsEnginePackage',
+    '',
+    group: SettingGroup.novel,
+  );
+
+  /// 系统 TTS 引擎内的音色名。空串表示引擎默认。
+  static const novelTtsEngineVoice = SettingKey<String>(
+    'novelTtsEngineVoice',
+    '',
+    group: SettingGroup.novel,
+  );
+
   /// 朗读音色 id（见 TtsVoice.values）。
   static const novelTtsVoice = SettingKey<String>(
     'novelTtsVoice',

@@ -41,6 +41,12 @@ class NovelTtsPlayer {
   List<TtsSentence> _sentences = const [];
   int _index = 0;
   double _speed = 1.0;
+
+  /// 系统 TTS 引擎包名（空 = 系统默认）。
+  String _enginePackage = '';
+
+  /// 引擎内音色名（空 = 引擎默认）。
+  String _engineVoice = '';
   bool _disposed = false;
 
   /// 临时 WAV 文件，播完即删。
@@ -56,6 +62,9 @@ class NovelTtsPlayer {
   TtsEngineKind get engineKind => _kind;
   bool get isActive => _state != TtsPlaybackState.idle;
   LocalTtsEngine get engine => _engine;
+
+  /// 系统 TTS 控制器。切引擎/选音色要走它。
+  NovelTtsController get system => _system;
 
   TtsSentence? get currentSentence {
     if (_state == TtsPlaybackState.idle) return null;
@@ -111,6 +120,16 @@ class NovelTtsPlayer {
     _kind = TtsEngineKind.system;
   }
 
+  /// 设置系统 TTS 引擎与音色。
+  ///
+  /// 这是给 MultiTTS 这类第三方引擎用的：它们注册成系统 TTS 引擎后，
+  /// 选它就能用它的音色（用户自己导入的微软/火山语音包）。
+  /// 注意只影响「系统通道」；神经网络通道用自己的模型。
+  void setSystemEngine({required String package, required String voice}) {
+    _enginePackage = package;
+    _engineVoice = voice;
+  }
+
   void setSpeed(double speed) {
     _speed = speed.clamp(0.3, 3.0);
   }
@@ -125,7 +144,18 @@ class NovelTtsPlayer {
       await _speakNeural();
       return;
     }
-    // 系统通道：把整章丢给 NovelTtsController，它自己串行。
+    // 系统通道：先应用用户选的引擎/音色，再交给 NovelTtsController。
+    if (_enginePackage.isNotEmpty) {
+      final ok = await _system.selectEngine(_enginePackage);
+      if (!ok) {
+        _notice('切换朗读引擎失败，用系统默认');
+      }
+    }
+    if (_engineVoice.isNotEmpty) {
+      await _system.selectVoice(_engineVoice);
+    }
+
+    // 把整章丢给 NovelTtsController，它自己串行。
     await _system.load(
       paragraphs: _currentParagraphs,
       indent: _currentIndent,

@@ -74,6 +74,75 @@ class NovelTtsController {
     await _tts.setPitch(pitch);
   }
 
+  /// 列出系统里装的所有 TTS 引擎（含 MultiTTS 这类第三方引擎）。
+  ///
+  /// MultiTTS 的价值就在这：它把自己注册成系统 TTS 引擎，所以任何用
+  /// 系统 TTS 的应用都能直接选它，不需要我们写任何集成代码。用户装好
+  /// MultiTTS、导入语音包（微软/sherpa/火山）之后，在系统设置或我们
+  /// 的朗读设置里选中它即可。
+  Future<List<Map<String, String>>> listEngines() async {
+    await _ensureInit();
+    final raw = await _tts.getEngines;
+    if (raw is! List) return const [];
+    return [
+      for (final e in raw)
+        if (e is Map)
+          {
+            'name': (e['name'] ?? '').toString(),
+            'package': (e['package'] ?? e['packageName'] ?? '').toString(),
+          },
+    ];
+  }
+
+  /// 列出当前引擎支持的中文音色。
+  Future<List<Map<String, String>>> listVoices() async {
+    await _ensureInit();
+    final raw = await _tts.getVoices;
+    if (raw is! List) return const [];
+    final out = <Map<String, String>>[];
+    for (final v in raw) {
+      if (v is! Map) continue;
+      final locale = (v['locale'] ?? v['language'] ?? '').toString();
+      // 只要中文（zh-CN / zh_CN / cmn-Hans-CN 都算）
+      if (!locale.toLowerCase().startsWith('zh') &&
+          !locale.toLowerCase().startsWith('cmn')) {
+        continue;
+      }
+      out.add({
+        'name': (v['name'] ?? '').toString(),
+        'locale': locale,
+        'id': (v['id'] ?? v['name'] ?? '').toString(),
+      });
+    }
+    return out;
+  }
+
+  /// 切换系统 TTS 引擎（例如切到 MultiTTS）。
+  ///
+  /// [packageName] 是 [listEngines] 返回的 package 字段。
+  Future<bool> selectEngine(String packageName) async {
+    await _ensureInit();
+    if (packageName.isEmpty) return false;
+    try {
+      final ok = await _tts.setEngine(packageName);
+      return ok == 1 || ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 选择音色（引擎内部的音色，如"小艺""云希"）。
+  Future<bool> selectVoice(String voiceName) async {
+    await _ensureInit();
+    if (voiceName.isEmpty) return false;
+    try {
+      final ok = await _tts.setVoice({'name': voiceName, 'locale': 'zh-CN'});
+      return ok == 1 || ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _ensureInit() async {
     if (_initialized) return;
     _initialized = true;

@@ -171,6 +171,8 @@ class NovelReaderPrefs extends ChangeNotifier {
   String _pageMode = 'paged';
   String _pageAnimation = 'curl';
   String _ttsVoiceId = 'xiao_ya';
+  String _ttsEnginePackage = '';
+  String _ttsEngineVoice = '';
   double _ttsRate = 0.5;
   double _ttsPitch = 1.0;
   bool _ttsAutoNext = true;
@@ -211,6 +213,18 @@ class NovelReaderPrefs extends ChangeNotifier {
   String get ttsVoiceId {
     _ensureLoaded();
     return _ttsVoiceId;
+  }
+
+  /// 系统 TTS 引擎包名（空 = 系统默认）。装了 MultiTTS 时填它的包名。
+  String get ttsEnginePackage {
+    _ensureLoaded();
+    return _ttsEnginePackage;
+  }
+
+  /// 引擎内的音色名（空 = 引擎默认）。
+  String get ttsEngineVoice {
+    _ensureLoaded();
+    return _ttsEngineVoice;
   }
 
   double get ttsRate {
@@ -344,6 +358,22 @@ class NovelReaderPrefs extends ChangeNotifier {
     if (id == _ttsVoiceId) return;
     _ttsVoiceId = id;
     GStorage.putSetting(SettingsKeys.novelTtsVoice, id);
+    notifyListeners();
+  }
+
+  void setTtsEnginePackage(String value) {
+    _ensureLoaded();
+    if (value == _ttsEnginePackage) return;
+    _ttsEnginePackage = value;
+    GStorage.putSetting(SettingsKeys.novelTtsEnginePackage, value);
+    notifyListeners();
+  }
+
+  void setTtsEngineVoice(String value) {
+    _ensureLoaded();
+    if (value == _ttsEngineVoice) return;
+    _ttsEngineVoice = value;
+    GStorage.putSetting(SettingsKeys.novelTtsEngineVoice, value);
     notifyListeners();
   }
 

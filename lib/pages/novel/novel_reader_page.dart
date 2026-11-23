@@ -381,6 +381,11 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     _tts.setSpeed(_ttsSpeed);
     // 应用用户选的音色（切换会重置引擎，所以放在 tryUseNeural 之前）。
     await _tts.engine.setVoice(TtsVoice.byId(_prefs.ttsVoiceId));
+    // 系统通道的引擎/音色（MultiTTS 等第三方引擎走这里）。
+    _tts.setSystemEngine(
+      package: _prefs.ttsEnginePackage,
+      voice: _prefs.ttsEngineVoice,
+    );
 
     // 优先用本地神经网络；模型没下就先问用户。
     final neural = await _tts.tryUseNeural();
@@ -480,6 +485,121 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     if (!mounted) return;
     if (_controller.status != NovelChapterStatus.ready) return;
     await _startTts();
+  }
+
+  /// 系统 TTS 引擎 / 音色选择面板。
+  ///
+  /// 为什么要这个：MultiTTS 这类第三方应用把自己注册成**系统 TTS 引擎**，
+  /// 装好并导入语音包（微软 Azure / 火山豆包 / sherpa）之后，任何用系统
+  /// TTS 的应用都能选它。我们不需要集成它的代码，只要把「选哪个引擎、
+  /// 哪个音色」的入口做出来。
+  Future<void> _openSystemEngineSheet() async {
+    final engines = await _tts.system.listEngines();
+    if (!mounted) return;
+    final voices = await _tts.system.listVoices();
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        builder: (ctx2, scrollController) {
+          final preset = _prefs.theme;
+          return Container(
+            decoration: BoxDecoration(
+              color: preset.background,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(18)),
+            ),
+            child: ListView(
+              controller: scrollController,
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+              children: [
+                Text('朗读引擎',
+                    style: _prefs.titleStyle.copyWith(fontSize: 16)),
+                const SizedBox(height: 4),
+                Text(
+                  '装了 MultiTTS 之类的第三方引擎，会出现在下面。'
+                  '选它之后，系统朗读就用它的音色。',
+                  style: TextStyle(fontSize: 12, color: preset.secondary),
+                ),
+                const SizedBox(height: 12),
+                RadioGroup<String>(
+                  groupValue: _prefs.ttsEnginePackage,
+                  onChanged: (v) {
+                    if (v == null) return;
+                    _prefs.setTtsEnginePackage(v);
+                    _prefs.setTtsEngineVoice('');
+                    setState(() {});
+                  },
+                  child: Column(
+                    children: [
+                      RadioListTile<String>(
+                        value: '',
+                        title: const Text('系统默认'),
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      for (final e in engines)
+                        RadioListTile<String>(
+                          value: e['package'] ?? '',
+                          title: Text(e['name'] ?? ''),
+                          subtitle: Text(
+                            e['package'] ?? '',
+                            style: TextStyle(
+                                fontSize: 11, color: preset.secondary),
+                          ),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                    ],
+                  ),
+                ),
+                if (_prefs.ttsEnginePackage.isNotEmpty) ...[
+                  const Divider(height: 32),
+                  Text('音色',
+                      style: _prefs.titleStyle.copyWith(fontSize: 15)),
+                  const SizedBox(height: 8),
+                  if (voices.isEmpty)
+                    Text(
+                      '这个引擎没有报告中文音色。'
+                      '可以在系统设置 → 文字转语音里配置。',
+                      style: TextStyle(fontSize: 12, color: preset.secondary),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final v in voices)
+                          ChoiceChip(
+                            label: Text(v['name'] ?? ''),
+                            selected:
+                                _prefs.ttsEngineVoice == (v['name'] ?? ''),
+                            onSelected: (_) {
+                              _prefs.setTtsEngineVoice(v['name'] ?? '');
+                              setState(() {});
+                            },
+                          ),
+                      ],
+                    ),
+                ],
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(ctx2).pop();
+                  },
+                  child: const Text('完成'),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _toggleBars() {
@@ -614,6 +734,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
           // 停掉当前朗读，下次点播放就会用新音色（setVoice 会重置引擎）。
           _tts.stop();
         },
+        onOpenEngineSheet: _openSystemEngineSheet,
       ),
     );
   }
@@ -1172,6 +1293,7 @@ class _ReaderSettingsSheet extends StatelessWidget {
   const _ReaderSettingsSheet({
     required this.prefs,
     required this.onVoiceChanged,
+    required this.onOpenEngineSheet,
   });
 
   final NovelReaderPrefs prefs;
@@ -1179,6 +1301,9 @@ class _ReaderSettingsSheet extends StatelessWidget {
   /// 切换音色：设置面板只负责改偏好，真正重启朗读引擎要由阅读页做
   /// （那里才有 _tts）。
   final void Function(String voiceId) onVoiceChanged;
+
+  /// 打开系统引擎选择面板（同样只有阅读页能访问 _tts）。
+  final VoidCallback onOpenEngineSheet;
 
   @override
   Widget build(BuildContext context) {
@@ -1372,6 +1497,24 @@ class _ReaderSettingsSheet extends StatelessWidget {
                             onSelected: (_) => onVoiceChanged(v.id),
                           ),
                       ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _LabeledRow(
+                    preset: preset,
+                    label: '系统朗读引擎',
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        onOpenEngineSheet();
+                      },
+                      icon: const Icon(Icons.settings_voice, size: 18),
+                      label: Text(
+                        _prefs.ttsEnginePackage.isEmpty
+                            ? '系统默认'
+                            : _prefs.ttsEnginePackage,
+                        style: const TextStyle(fontSize: 12),
+                      ),
                     ),
                   ),
                   _SliderRow(
