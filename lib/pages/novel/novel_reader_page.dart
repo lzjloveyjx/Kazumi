@@ -4,6 +4,7 @@ import 'package:flutter_modular/flutter_modular.dart';
 
 import 'package:kazumi/bean/widget/empty_state_widget.dart';
 import 'package:kazumi/bean/widget/novel_cover_image.dart';
+import 'package:kazumi/bean/widget/novel_page_curl.dart';
 import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/pages/novel/novel_reader_controller.dart';
 import 'package:kazumi/plugins/plugins.dart';
@@ -94,6 +95,16 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   /// 当前朗读到第几句。
   int _ttsSentenceIndex = 0;
+
+  /// 卷页动画状态。
+  ///
+  /// null 表示没有正在进行的拖动。否则是 (起拖方向, 0~1 进度)。
+  /// 用 drag 而不是点按触发：卷页的手感来自「手指拖着纸角走」，
+  /// 点击触发只能做成定时动画，没有跟手的感觉。
+  ({bool forward, double progress})? _curl;
+
+  /// 拖动的起点 x，用来判断方向。
+  double _dragStartX = 0;
 
   /// 点按判定用的按下状态。见 [_onPointerUp] 的注释。
   Offset? _downPosition;
@@ -730,38 +741,113 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   }
 
   /// 翻页模式的正文。
+  ///
+  /// 用「手势拖拽 + 卷页动画」而不是 PageView 的滑动：
+  /// PageView 的过渡是整页平移，看着像幻灯片；卷页是把纸角拖起来翻过去，
+  /// 手感接近实体书。两者都支持，由 [NovelReaderPrefs] 里的
+  /// pageAnimation 决定（卷页 / 平移 / 无动画）。
   Widget _buildPaged(NovelThemePreset preset, double width, double height) {
     if (_pages.isEmpty) {
       return const Center(child: SizedBox.shrink());
     }
     _pageController ??= PageController(initialPage: _pageIndex);
-    return Listener(
-      behavior: HitTestBehavior.opaque,
-      onPointerDown: _onPointerDown,
-      onPointerUp: _onPointerUp,
-      child: PageView.builder(
-        controller: _pageController,
-        itemCount: _pages.length,
-        onPageChanged: (index) {
-          setState(() => _pageIndex = index);
-          _recordProgress();
-        },
-        itemBuilder: (context, index) => Padding(
-          padding: EdgeInsets.fromLTRB(
-            _prefs.margin,
-            _barsVisible ? kToolbarHeight + 8 : 8,
-            _prefs.margin,
-            _barsVisible ? 64 : 8,
-          ),
-          child: _PageView(
-            page: _pages[index],
-            prefs: _prefs,
-            referer: _imageReferer,
-            maxHeight: height,
-            // 只在当前页且正在朗读时传高亮区间
-            highlight: _highlightForPage(index, _pages[index]),
-          ),
+
+    final curl = _curl;
+    if (curl != null && _prefs.pageAnimation == 'curl') {
+      // 卷页进行中：叠一层动画
+      final forward = curl.forward;
+      final outgoingIndex = forward ? _pageIndex : _pageIndex;
+      final incomingIndex = forward
+          ? (_pageIndex + 1).clamp(0, _pages.length - 1)
+          : (_pageIndex - 1).clamp(0, _pages.length - 1);
+      return NovelPageCurl(
+        progress: curl.progress,
+        forward: forward,
+        backgroundColor: preset.background,
+        outgoing: _pageContent(outgoingIndex, height),
+        incoming: _pageContent(incomingIndex, height),
+      );
+    }
+
+    return GestureDetector(
+      // 水平拖动驱动卷页；短距离拖动仍然交给点击热区处理。
+      onHorizontalDragStart: _prefs.pageAnimation == 'curl'
+          ? (details) {
+              _dragStartX = details.localPosition.dx;
+            }
+          : null,
+      onHorizontalDragUpdate: _prefs.pageAnimation == 'curl'
+          ? (details) {
+              final dx = details.localPosition.dx - _dragStartX;
+              final forward = dx < 0;
+              final canTurn = forward
+                  ? (_pageIndex + 1 < _pages.length ||
+                      _chapterIndex + 1 < _urls.length)
+                  : (_pageIndex > 0 || _chapterIndex > 0);
+              if (!canTurn) {
+                setState(() => _curl = null);
+                return;
+              }
+              final progress = (dx.abs() / width).clamp(0.0, 1.0);
+              setState(() => _curl = (forward: forward, progress: progress));
+            }
+          : null,
+      onHorizontalDragEnd: _prefs.pageAnimation == 'curl'
+          ? (details) {
+              final curl = _curl;
+              if (curl == null) return;
+              // 拖过 30% 或快速甩动就完成翻页
+              final velocity = details.velocity.pixelsPerSecond.dx;
+              final flung = curl.forward ? velocity < -300 : velocity > 300;
+              if (curl.progress > 0.3 || flung) {
+                setState(() => _curl = null);
+                if (curl.forward) {
+                  _next();
+                } else {
+                  _previous();
+                }
+              } else {
+                // 没翻过去：回弹
+                setState(() => _curl = null);
+              }
+            }
+          : null,
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: _onPointerDown,
+        onPointerUp: _onPointerUp,
+        child: PageView.builder(
+          controller: _pageController,
+          // 卷页模式下禁用 PageView 自带的滑动，避免两套动画打架
+          physics: _prefs.pageAnimation == 'curl'
+              ? const NeverScrollableScrollPhysics()
+              : null,
+          itemCount: _pages.length,
+          onPageChanged: (index) {
+            setState(() => _pageIndex = index);
+            _recordProgress();
+          },
+          itemBuilder: (context, index) => _pageContent(index, height),
         ),
+      ),
+    );
+  }
+
+  /// 单页内容（卷页与 PageView 共用）。
+  Widget _pageContent(int index, double height) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        _prefs.margin,
+        _barsVisible ? kToolbarHeight + 8 : 8,
+        _prefs.margin,
+        _barsVisible ? 64 : 8,
+      ),
+      child: _PageView(
+        page: _pages[index],
+        prefs: _prefs,
+        referer: _imageReferer,
+        maxHeight: height,
+        highlight: _highlightForPage(index, _pages[index]),
       ),
     );
   }
@@ -1154,6 +1240,27 @@ class _ReaderSettingsSheet extends StatelessWidget {
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 8),
+                  _LabeledRow(
+                    preset: preset,
+                    label: '翻页动画',
+                    child: Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final option in const [
+                          ('curl', '卷页'),
+                          ('slide', '平移'),
+                          ('none', '无'),
+                        ])
+                          ChoiceChip(
+                            label: Text(option.$2),
+                            selected: prefs.pageAnimation == option.$1,
+                            onSelected: (_) =>
+                                prefs.setPageAnimation(option.$1),
+                          ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 8),
                   _StepperRow(

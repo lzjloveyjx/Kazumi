@@ -622,6 +622,13 @@ class SettingsKeys {
     group: SettingGroup.novel,
   );
 
+  /// 翻页动画：curl（卷页）| slide（平移）| none（无动画）。
+  static const novelPageAnimation = SettingKey<String>(
+    'novelPageAnimation',
+    'curl',
+    group: SettingGroup.novel,
+  );
+
   /// 朗读语速。0.5 是系统 TTS 的中速，中文听感接近正常说话。
   static const novelTtsRate = SettingKey<double>(
     'novelTtsRate',

@@ -169,6 +169,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   String _themeId = 'paper';
   bool _indent = true;
   String _pageMode = 'paged';
+  String _pageAnimation = 'curl';
   double _ttsRate = 0.5;
   double _ttsPitch = 1.0;
   bool _ttsAutoNext = true;
@@ -197,6 +198,12 @@ class NovelReaderPrefs extends ChangeNotifier {
   bool get pagedMode {
     _ensureLoaded();
     return _pageMode == 'paged';
+  }
+
+  /// 翻页动画：curl / slide / none。
+  String get pageAnimation {
+    _ensureLoaded();
+    return _pageAnimation;
   }
 
   double get ttsRate {
@@ -314,6 +321,14 @@ class NovelReaderPrefs extends ChangeNotifier {
     if (next == _pageMode) return;
     _pageMode = next;
     GStorage.putSetting(SettingsKeys.novelPageMode, next);
+    notifyListeners();
+  }
+
+  void setPageAnimation(String value) {
+    _ensureLoaded();
+    if (value == _pageAnimation) return;
+    _pageAnimation = value;
+    GStorage.putSetting(SettingsKeys.novelPageAnimation, value);
     notifyListeners();
   }
 
