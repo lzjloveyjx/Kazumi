@@ -41,6 +41,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build libgtk-3-dev libayatana-appindicator3-dev libasound2-dev
 
+      # 版本号从 tag 推导，不再手改 pubspec。
+      #
+      # 之前反复出问题：改了代码、忘了改 pubspec 的 version，打出去的 APK
+      # 报的是旧版本号，于是「检查更新」永远提示有新版本（它确实有）。
+      # 现在由 tag 决定：v0.6.0-qingshu → versionName 0.6.0，
+      # build number 用 github.run_number 保证单调递增。
+      - name: Derive version from tag
+        id: ver
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          # workflow_dispatch 时 ref_name 是分支名，没有版本信息，退回 pubspec
+          if [[ "$TAG" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            NAME="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          else
+            NAME="$(grep -m1 '^version:' pubspec.yaml | sed 's/^version: *//' | cut -d+ -f1)"
+            echo "::warning::ref '$TAG' 不含版本号，回退到 pubspec: $NAME"
+          fi
+          # build number 用 run_number：天然单调递增，且不需要人维护
+          BUILD="${GITHUB_RUN_NUMBER}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "resolved: $NAME+$BUILD"
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -50,6 +74,8 @@ jobs:
       - name: Build APK
         run: |
           flutter build apk --split-per-abi \
+            --build-name="${{ steps.ver.outputs.name }}" \
+            --build-number="${{ steps.ver.outputs.build }}" \
             --dart-define=DANDANAPI_APPID="" \
             --dart-define=DANDANAPI_KEY="" \
             --dart-define=KAZUMI_APPID="" \
