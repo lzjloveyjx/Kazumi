@@ -169,6 +169,9 @@ class NovelReaderPrefs extends ChangeNotifier {
   String _themeId = 'paper';
   bool _indent = true;
   String _pageMode = 'paged';
+  double _ttsRate = 0.5;
+  double _ttsPitch = 1.0;
+  bool _ttsAutoNext = true;
 
   double get fontSize {
     _ensureLoaded();
@@ -194,6 +197,22 @@ class NovelReaderPrefs extends ChangeNotifier {
   bool get pagedMode {
     _ensureLoaded();
     return _pageMode == 'paged';
+  }
+
+  double get ttsRate {
+    _ensureLoaded();
+    return _ttsRate;
+  }
+
+  double get ttsPitch {
+    _ensureLoaded();
+    return _ttsPitch;
+  }
+
+  /// 一章读完自动读下一章。
+  bool get ttsAutoNext {
+    _ensureLoaded();
+    return _ttsAutoNext;
   }
   NovelFontFamilyOption get fontFamily {
     _ensureLoaded();
@@ -295,6 +314,32 @@ class NovelReaderPrefs extends ChangeNotifier {
     if (next == _pageMode) return;
     _pageMode = next;
     GStorage.putSetting(SettingsKeys.novelPageMode, next);
+    notifyListeners();
+  }
+
+  void setTtsRate(double value) {
+    _ensureLoaded();
+    final next = value.clamp(0.2, 1.0).toDouble();
+    if (next == _ttsRate) return;
+    _ttsRate = next;
+    GStorage.putSetting(SettingsKeys.novelTtsRate, next);
+    notifyListeners();
+  }
+
+  void setTtsPitch(double value) {
+    _ensureLoaded();
+    final next = value.clamp(0.5, 2.0).toDouble();
+    if (next == _ttsPitch) return;
+    _ttsPitch = next;
+    GStorage.putSetting(SettingsKeys.novelTtsPitch, next);
+    notifyListeners();
+  }
+
+  void setTtsAutoNext(bool value) {
+    _ensureLoaded();
+    if (value == _ttsAutoNext) return;
+    _ttsAutoNext = value;
+    GStorage.putSetting(SettingsKeys.novelTtsAutoNext, value);
     notifyListeners();
   }
 
