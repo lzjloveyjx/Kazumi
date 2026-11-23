@@ -9,6 +9,7 @@ import 'package:kazumi/pages/novel/novel_reader_controller.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/repositories/novel_shelf_repository.dart';
 import 'package:kazumi/services/novel/novel_paginator.dart';
+import 'package:kazumi/services/novel/novel_tts_controller.dart';
 import 'package:kazumi/services/novel/novel_reader_prefs.dart';
 
 /// 小说阅读页。
@@ -84,6 +85,15 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   /// 打开新章后，第一次分页完成时要把位置恢复到上次读的地方。
   bool _pendingRestore = false;
 
+  /// 朗读控制器。
+  late final NovelTtsController _tts;
+
+  /// 朗读状态（用于刷新按钮与高亮）。
+  TtsPlaybackState _ttsState = TtsPlaybackState.idle;
+
+  /// 当前朗读到第几句。
+  int _ttsSentenceIndex = 0;
+
   /// 点按判定用的按下状态。见 [_onPointerUp] 的注释。
   Offset? _downPosition;
   DateTime? _downTime;
@@ -107,6 +117,9 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       dropSelector: widget.plugin.chapterDrop,
     );
     _controller.addListener(_onControllerChanged);
+    _tts = NovelTtsController()
+      ..onStateChanged = _onTtsStateChanged
+      ..onSentenceChanged = _onTtsSentenceChanged;
 
     if (_roadIndex < 0 || _roadIndex >= widget.roads.length) _roadIndex = 0;
     if (_chapterIndex < 0 || _chapterIndex >= _urls.length) _chapterIndex = 0;
@@ -127,6 +140,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
         overlays: SystemUiOverlay.values);
     _controller.removeListener(_onControllerChanged);
     _controller.dispose();
+    _tts.dispose();
     _scroll.dispose();
     _pageController?.dispose();
     super.dispose();
@@ -150,6 +164,11 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   Future<void> _open(int index) async {
     if (index < 0 || index >= _urls.length) return;
+    // 换章要先停掉朗读，否则旧章的音频还在播、新的句子又插进来。
+    if (_ttsState != TtsPlaybackState.idle) {
+      await _tts.stop();
+      _ttsSentenceIndex = 0;
+    }
     setState(() {
       _chapterIndex = index;
       _pageIndex = 0;
@@ -260,6 +279,100 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   }
 
   // ── 交互 ────────────────────────────────────────────────────────────────
+
+  // ── 朗读 ────────────────────────────────────────────────────────────────
+
+  void _onTtsStateChanged(TtsPlaybackState state) {
+    if (!mounted) return;
+    setState(() => _ttsState = state);
+    // 读完最后一句且开了自动续读，跳到下一章继续。
+    if (state == TtsPlaybackState.idle &&
+        _tts.atEnd &&
+        _prefs.ttsAutoNext &&
+        _chapterIndex + 1 < _urls.length) {
+      _openAndResumeTts(_chapterIndex + 1);
+    }
+  }
+
+  void _onTtsSentenceChanged(int index) {
+    if (!mounted) return;
+    setState(() => _ttsSentenceIndex = index);
+    // 朗读到的那句可能不在当前页，把页面跟过去 —— 否则「听着听着屏幕不动」
+    // 会让人以为卡了。
+    _syncPageToSentence(index);
+  }
+
+  /// 把当前页跳到包含第 [sentenceIndex] 句的那一页。
+  ///
+  /// 需要「句子 → 段落 → 页」两层映射：TTS 按句切，分页按段切。做法是先用
+  /// 句子在整章文本里的 start 找到它落在哪个段落，再找第一个
+  /// firstParagraphIndex 不超过它的页。
+  void _syncPageToSentence(int sentenceIndex) {
+    if (!_prefs.pagedMode) return;
+    if (_pages.isEmpty) return;
+    if (sentenceIndex < 0 || sentenceIndex >= _tts.sentences.length) return;
+
+    final charOffset = _tts.sentences[sentenceIndex].start;
+    // 各段落起点在整章文本中的累计偏移。
+    final paragraphAt = _paragraphIndexAtOffset(charOffset);
+    if (paragraphAt < 0) return;
+
+    var target = _pageIndex;
+    for (var i = _pages.length - 1; i >= 0; i--) {
+      if (_pages[i].firstParagraphIndex <= paragraphAt) {
+        target = i;
+        break;
+      }
+    }
+    if (target == _pageIndex) return;
+    setState(() => _pageIndex = target);
+    if (_pageController?.hasClients ?? false) {
+      _pageController!.jumpToPage(target);
+    }
+  }
+
+  /// 字符偏移 → 段落下标。
+  int _paragraphIndexAtOffset(int offset) {
+    final blocks = NovelPaginator()
+        .blocksOf(_controller.paragraphs, indent: _prefs.indent);
+    var cursor = 0;
+    for (var i = 0; i < blocks.length; i++) {
+      if (blocks[i].isImage) continue;
+      final len = blocks[i].text.length;
+      if (offset < cursor + len) return i;
+      cursor += len + 1; // +1 是段落之间的换行
+    }
+    return -1;
+  }
+
+  Future<void> _toggleTts() async {
+    if (_ttsState == TtsPlaybackState.speaking) {
+      _tts.pause();
+      return;
+    }
+    if (_ttsState == TtsPlaybackState.paused) {
+      await _tts.resume();
+      return;
+    }
+    await _startTts();
+  }
+
+  Future<void> _startTts() async {
+    await _tts.load(
+      paragraphs: _controller.paragraphs,
+      indent: _prefs.indent,
+      fromSentence: _ttsSentenceIndex,
+    );
+    await _tts.applySettings(rate: _prefs.ttsRate, pitch: _prefs.ttsPitch);
+    await _tts.play();
+  }
+
+  Future<void> _openAndResumeTts(int chapterIndex) async {
+    await _open(chapterIndex);
+    if (!mounted) return;
+    if (_controller.status != NovelChapterStatus.ready) return;
+    await _startTts();
+  }
 
   void _toggleBars() {
     setState(() => _barsVisible = !_barsVisible);
@@ -396,6 +509,45 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     return referer.isNotEmpty ? referer : widget.plugin.baseUrl;
   }
 
+  /// 算出这一页需要高亮的字符区间（相对本页第一个块）。
+  ///
+  /// 返回 (blockIndex, start, end)：blockIndex 是本页内的块下标，start/end
+  /// 是该块文本内的偏移。朗读跨段时只能高亮当前句落在这一段的那部分，
+  /// 因为一段就是一个 Text，高亮不能跨 Text。
+  ({int block, int start, int end})? _highlightForPage(
+    int pageNumber,
+    NovelPage page,
+  ) {
+    if (_ttsState == TtsPlaybackState.idle) return null;
+    if (pageNumber != _pageIndex) return null;
+    if (_ttsSentenceIndex < 0 || _ttsSentenceIndex >= _tts.sentences.length) {
+      return null;
+    }
+    final sentence = _tts.sentences[_ttsSentenceIndex];
+    // 句子在整章里的偏移 → 本页第几个块
+    final blocks = NovelPaginator()
+        .blocksOf(_controller.paragraphs, indent: _prefs.indent);
+    var cursor = 0;
+    for (var i = 0; i < blocks.length; i++) {
+      if (blocks[i].isImage) continue;
+      final len = blocks[i].text.length;
+      if (sentence.start < cursor + len) {
+        // 找到句子所在的块 -> 换算成本页内的块下标
+        final inPage = page.blocks.indexWhere(
+          (b) => !b.isImage && b.text == blocks[i].text,
+        );
+        if (inPage < 0) return null;
+        return (
+          block: inPage,
+          start: (sentence.start - cursor).clamp(0, len),
+          end: (sentence.end - cursor).clamp(0, len),
+        );
+      }
+      cursor += len + 1;
+    }
+    return null;
+  }
+
   // ── 构建 ────────────────────────────────────────────────────────────────
 
   @override
@@ -512,6 +664,8 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
             prefs: _prefs,
             referer: _imageReferer,
             maxHeight: height,
+            // 只在当前页且正在朗读时传高亮区间
+            highlight: _highlightForPage(index, _pages[index]),
           ),
         ),
       ),
@@ -674,6 +828,24 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                     tooltip: paged ? '下一页' : '下一章',
                   ),
                   IconButton(
+                    tooltip: _ttsState == TtsPlaybackState.speaking
+                        ? '暂停朗读'
+                        : (_ttsState == TtsPlaybackState.paused
+                            ? '继续朗读'
+                            : '朗读'),
+                    onPressed: _controller.status == NovelChapterStatus.ready
+                        ? _toggleTts
+                        : null,
+                    icon: Icon(
+                      _ttsState == TtsPlaybackState.speaking
+                          ? Icons.pause_circle_filled
+                          : Icons.headphones,
+                      color: _ttsState == TtsPlaybackState.speaking
+                          ? Theme.of(context).colorScheme.primary
+                          : preset.text,
+                    ),
+                  ),
+                  IconButton(
                     tooltip: '阅读设置',
                     onPressed: _openReaderSettings,
                     icon: Icon(Icons.text_fields, color: preset.text),
@@ -700,12 +872,16 @@ class _PageView extends StatelessWidget {
     required this.prefs,
     required this.referer,
     required this.maxHeight,
+    this.highlight,
   });
 
   final NovelPage page;
   final NovelReaderPrefs prefs;
   final String referer;
   final double maxHeight;
+
+  /// 朗读高亮：(页内块下标, 块内起, 块内止)。
+  final ({int block, int start, int end})? highlight;
 
   @override
   Widget build(BuildContext context) {
@@ -715,13 +891,15 @@ class _PageView extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final block in page.blocks)
+            for (var i = 0; i < page.blocks.length; i++)
               Padding(
                 padding: EdgeInsets.only(bottom: prefs.fontSize * 0.72),
                 child: _BlockView(
-                  block: block,
+                  block: page.blocks[i],
                   prefs: prefs,
                   referer: referer,
+                  highlight:
+                      highlight != null && highlight!.block == i ? highlight : null,
                 ),
               ),
           ],
@@ -736,22 +914,66 @@ class _BlockView extends StatelessWidget {
     required this.block,
     required this.prefs,
     required this.referer,
+    this.highlight,
   });
 
   final NovelBlock block;
   final NovelReaderPrefs prefs;
   final String referer;
+  final ({int block, int start, int end})? highlight;
 
   @override
   Widget build(BuildContext context) {
     final url = block.imageUrl;
-    if (url == null) {
+    if (url != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: NovelCoverImage(url: url, referer: referer, fit: BoxFit.contain),
+      );
+    }
+
+    final h = highlight;
+    if (h == null) {
       return Text(block.text, style: prefs.textStyle);
     }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: NovelCoverImage(url: url, referer: referer, fit: BoxFit.contain),
+
+    // 用 TextSpan 给正在朗读的那一段上底色，而不是整段换样式：
+    // 高亮范围是一句话，通常只占段落的一部分，整段变色会让人分不清读到哪。
+    final text = block.text;
+    final start = h.start.clamp(0, text.length);
+    final end = h.end.clamp(start, text.length);
+    if (start == end) {
+      return Text(text, style: prefs.textStyle);
+    }
+    final mark = NovelHighlightColors.of(context);
+    return Text.rich(
+      TextSpan(
+        style: prefs.textStyle,
+        children: [
+          if (start > 0) TextSpan(text: text.substring(0, start)),
+          TextSpan(
+            text: text.substring(start, end),
+            style: TextStyle(backgroundColor: mark),
+          ),
+          if (end < text.length) TextSpan(text: text.substring(end)),
+        ],
+      ),
     );
+  }
+}
+
+/// 朗读高亮用的底色。
+///
+/// 单独抽出来是因为它要跟阅读背景搭配：米黄底上用淡蓝，夜间用低饱和的
+/// 暗蓝 —— 一个固定的 colorScheme.primary 在浅色和深色阅读主题下总有一边
+/// 看不清。用带 alpha 的叠色，文字本身颜色不变，所以对比度不会掉。
+class NovelHighlightColors {
+  const NovelHighlightColors._();
+
+  static Color of(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? const Color(0x553A6EA5)
+        : const Color(0x331E88E5);
   }
 }
 
@@ -907,6 +1129,44 @@ class _ReaderSettingsSheet extends StatelessWidget {
                     onChanged: prefs.setIndent,
                     title: Text(
                       '首行缩进',
+                      style: prefs.captionStyle.copyWith(
+                        fontSize: 14,
+                        color: preset.text,
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  Text(
+                    '朗读',
+                    style: TextStyle(fontSize: 14, color: preset.secondary),
+                  ),
+                  const SizedBox(height: 4),
+                  _SliderRow(
+                    preset: preset,
+                    label: '语速',
+                    value: prefs.ttsRate,
+                    min: 0.2,
+                    max: 1.0,
+                    divisions: 16,
+                    display: prefs.ttsRate.toStringAsFixed(1),
+                    onChanged: prefs.setTtsRate,
+                  ),
+                  _SliderRow(
+                    preset: preset,
+                    label: '音调',
+                    value: prefs.ttsPitch,
+                    min: 0.5,
+                    max: 2.0,
+                    divisions: 15,
+                    display: prefs.ttsPitch.toStringAsFixed(1),
+                    onChanged: prefs.setTtsPitch,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: prefs.ttsAutoNext,
+                    onChanged: prefs.setTtsAutoNext,
+                    title: Text(
+                      '读完自动下一章',
                       style: prefs.captionStyle.copyWith(
                         fontSize: 14,
                         color: preset.text,
