@@ -139,8 +139,16 @@ class AutoUpdater {
 
       // tag 形如 v0.3.0-qingshu，直接喂给 needUpdate 会在 int.parse("v0")
       // 上抛 FormatException，整个检查更新静默失败。先剥掉前缀和后缀。
+      //
+      // ⚠️ 发版时必须让 pubspec 的 version 与 release tag 的数字一致。
+      // 之前出过一次「永远提示更新」：APK 是用 pubspec 0.3.0 构建的，但 tag
+      // 打了 v0.3.1 —— 应用如实上报 0.3.0，于是每次启动都被告知有新版本。
       final remoteVersion = _normalizeVersionTag(data['tag_name'] as String);
       final currentVersion = _normalizeVersionTag(ApiEndpoints.version);
+      KazumiLogger().i(
+        'Update: current=$currentVersion remote=$remoteVersion '
+        '(raw tag: ${data['tag_name']})',
+      );
 
       if (needUpdate(currentVersion, remoteVersion)) {
         final availableTypes = _detectAvailableInstallationTypes();
