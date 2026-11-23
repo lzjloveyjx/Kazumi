@@ -33,6 +33,13 @@ class LocalTtsEngine {
   int _requestSeq = 0;
   final Map<int, Completer<TtsAudio>> _pending = {};
 
+  /// 合成完成回调（可选）。合成结果同时也会由 [synthesize] 返回 ——
+  /// 两者**只能择一**，都用会重复播放。
+  void Function(TtsAudio audio)? onAudio;
+
+  /// 引擎层错误回调（可选）。
+  void Function(String error)? onError;
+
   bool get isReady => _ready;
   bool get isLoading => _loading;
   String get error => _error;
@@ -152,7 +159,11 @@ class IsolateHandle {
   Isolate? _isolate;
   SendPort? _toWorker;
   ReceivePort? _from;
+
+  /// isolate 回传的音频，由 LocalTtsEngine 挂接。
   void Function(TtsAudio audio)? onAudio;
+
+  /// isolate 回传的错误。
   void Function(String error)? onError;
 
   Future<void> start() async {
