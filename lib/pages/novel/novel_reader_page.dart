@@ -10,6 +10,7 @@ import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/repositories/novel_shelf_repository.dart';
 import 'package:kazumi/services/novel/novel_paginator.dart';
 import 'package:kazumi/services/novel/novel_tts_controller.dart';
+import 'package:kazumi/services/novel/novel_tts_player.dart';
 import 'package:kazumi/services/novel/novel_reader_prefs.dart';
 
 /// 小说阅读页。
@@ -86,7 +87,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   bool _pendingRestore = false;
 
   /// 朗读控制器。
-  late final NovelTtsController _tts;
+  late final NovelTtsPlayer _tts;
 
   /// 朗读状态（用于刷新按钮与高亮）。
   TtsPlaybackState _ttsState = TtsPlaybackState.idle;
@@ -117,9 +118,10 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       dropSelector: widget.plugin.chapterDrop,
     );
     _controller.addListener(_onControllerChanged);
-    _tts = NovelTtsController()
+    _tts = NovelTtsPlayer()
       ..onStateChanged = _onTtsStateChanged
-      ..onSentenceChanged = _onTtsSentenceChanged;
+      ..onSentenceChanged = _onTtsSentenceChanged
+      ..onNotice = _onTtsNotice;
 
     if (_roadIndex < 0 || _roadIndex >= widget.roads.length) _roadIndex = 0;
     if (_chapterIndex < 0 || _chapterIndex >= _urls.length) _chapterIndex = 0;
@@ -347,7 +349,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   Future<void> _toggleTts() async {
     if (_ttsState == TtsPlaybackState.speaking) {
-      _tts.pause();
+      await _tts.pause();
       return;
     }
     if (_ttsState == TtsPlaybackState.paused) {
@@ -358,13 +360,105 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   }
 
   Future<void> _startTts() async {
+    _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
     await _tts.load(
       paragraphs: _controller.paragraphs,
       indent: _prefs.indent,
       fromSentence: _ttsSentenceIndex,
     );
-    await _tts.applySettings(rate: _prefs.ttsRate, pitch: _prefs.ttsPitch);
+    _tts.setSpeed(_ttsSpeed);
+
+    // 优先用本地神经网络；模型没下就先问用户。
+    final neural = await _tts.tryUseNeural();
+    if (!neural && mounted) {
+      final download = await _askDownloadModel();
+      if (download == true) {
+        final ok = await _downloadModelThenPlay();
+        if (ok) return;
+      }
+    }
     await _tts.play();
+  }
+
+  /// 语速倍率。prefs 里存的是系统 TTS 的 rate（0.2~1.0），
+  /// 神经网络通道要的是倍率（0.3~3.0），这里做一次映射。
+  double get _ttsSpeed => (0.5 + _prefs.ttsRate * 1.5).clamp(0.5, 2.5);
+
+  /// 问用户要不要下载模型。
+  Future<bool?> _askDownloadModel() async {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('下载语音模型？'),
+        content: const Text(
+          '本地神经网络朗读需要先下载一个约 31MB 的中文语音模型。\n\n'
+          '下载后完全离线可用，音质接近有声书。\n'
+          '不下载的话会用系统朗读，能听但声音机械。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('用系统朗读'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('下载'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _downloadModelThenPlay() async {
+    // 用 SnackBar 显示进度：模型下载是一两分钟的活，不该只有个转圈。
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('正在下载语音模型…'),
+        duration: Duration(minutes: 10),
+      ),
+    );
+    try {
+      await _tts.engine.downloadModel(
+        onProgress: (p) {
+          // 进度百分比挂在 SnackBar 上会刷屏，这里只在整十的时候更新。
+          final pct = (p * 100).round();
+          if (pct % 10 == 0 && mounted) {
+            messenger.showSnackBar(
+              SnackBar(
+                content: Text('正在下载语音模型… $pct%'),
+                duration: const Duration(minutes: 10),
+              ),
+            );
+          }
+        },
+      );
+      messenger.hideCurrentSnackBar();
+      final ok = await _tts.tryUseNeural();
+      if (ok) {
+        await _tts.play(fromSentence: _ttsSentenceIndex);
+        return true;
+      }
+      messenger.showSnackBar(
+        const SnackBar(content: Text('模型下载好了但加载失败，先用系统朗读')),
+      );
+      await _tts.play(fromSentence: _ttsSentenceIndex);
+      return true;
+    } catch (e) {
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(content: Text('下载失败：$e')),
+      );
+      await _tts.play(fromSentence: _ttsSentenceIndex);
+      return true;
+    }
+  }
+
+  void _onTtsNotice(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
   }
 
   Future<void> _openAndResumeTts(int chapterIndex) async {
