@@ -1,3 +1,0 @@
-lexicon.txt
-tokens.txt
-zh_CN-xiao_ya-medium.onnx

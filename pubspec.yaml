@@ -179,10 +179,6 @@ flutter:
     - assets/shaders/
     # 内置小说规则（KazumiRules 官方仓库没有 novel 类型，这里补上）
     - assets/rules/novel/
-    # 离线语音模型（sherpa-onnx VITS 中文，31MB）。
-    # 自用版本直接打进包：不用下载、不受网络影响。APK 会因此涨到 ~72MB。
-    - assets/tts/xiao_ya/
-    - assets/tts/chaowen/
     - assets/images/logo/
     - assets/statements/
     - licenses/ech_http/

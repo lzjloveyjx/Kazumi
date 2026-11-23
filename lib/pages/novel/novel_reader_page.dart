@@ -13,7 +13,6 @@ import 'package:kazumi/services/novel/novel_paginator.dart';
 import 'package:kazumi/services/novel/novel_tts_controller.dart';
 import 'package:kazumi/services/novel/novel_tts_player.dart';
 import 'package:kazumi/services/novel/novel_reader_prefs.dart';
-import 'package:kazumi/services/novel/tts_model_manager.dart';
 
 /// 小说阅读页。
 ///
@@ -379,8 +378,6 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       fromSentence: _ttsSentenceIndex,
     );
     _tts.setSpeed(_ttsSpeed);
-    // 应用用户选的音色（切换会重置引擎，所以放在 tryUseNeural 之前）。
-    await _tts.engine.setVoice(TtsVoice.byId(_prefs.ttsVoiceId));
     // 系统通道的引擎/音色（MultiTTS 等第三方引擎走这里）。
     _tts.setSystemEngine(
       package: _prefs.ttsEnginePackage,
@@ -653,11 +650,6 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => _ReaderSettingsSheet(
         prefs: _prefs,
-        onVoiceChanged: (id) {
-          _prefs.setTtsVoice(id);
-          // 停掉当前朗读，下次点播放就会用新音色（setVoice 会重置引擎）。
-          _tts.stop();
-        },
         onOpenEngineSheet: _openSystemEngineSheet,
       ),
     );
@@ -1216,15 +1208,10 @@ class NovelHighlightColors {
 class _ReaderSettingsSheet extends StatelessWidget {
   const _ReaderSettingsSheet({
     required this.prefs,
-    required this.onVoiceChanged,
     required this.onOpenEngineSheet,
   });
 
   final NovelReaderPrefs prefs;
-
-  /// 切换音色：设置面板只负责改偏好，真正重启朗读引擎要由阅读页做
-  /// （那里才有 _tts）。
-  final void Function(String voiceId) onVoiceChanged;
 
   /// 打开系统引擎选择面板（同样只有阅读页能访问 _tts）。
   final VoidCallback onOpenEngineSheet;
@@ -1408,21 +1395,6 @@ class _ReaderSettingsSheet extends StatelessWidget {
                     style: TextStyle(fontSize: 14, color: preset.secondary),
                   ),
                   const SizedBox(height: 4),
-                  _LabeledRow(
-                    preset: preset,
-                    label: '音色',
-                    child: Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final v in TtsVoice.values)
-                          ChoiceChip(
-                            label: Text(v.label),
-                            selected: prefs.ttsVoiceId == v.id,
-                            onSelected: (_) => onVoiceChanged(v.id),
-                          ),
-                      ],
-                    ),
-                  ),
                   const SizedBox(height: 8),
                   _LabeledRow(
                     preset: preset,
