@@ -28,6 +28,8 @@ class NovelBookPage extends StatefulWidget {
     this.bookKey = '',
     this.initialRoadIndex = 0,
     this.initialChapterIndex = 0,
+    this.initialPageIndex = 0,
+    this.initialPageAnchor = 0,
   });
 
   final Plugin plugin;
@@ -42,6 +44,10 @@ class NovelBookPage extends StatefulWidget {
   /// 从哪一章开始读。来自书架/历史时是上次的位置，否则是 0。
   final int initialRoadIndex;
   final int initialChapterIndex;
+
+  /// 上次读到那一章的第几页 + 段落锚点（分页模式用）。
+  final int initialPageIndex;
+  final int initialPageAnchor;
 
   @override
   State<NovelBookPage> createState() => _NovelBookPageState();
@@ -278,6 +284,16 @@ class _NovelBookPageState extends State<NovelBookPage> {
           bookKey: bookKey,
           initialRoadIndex: roadIndex,
           initialChapterIndex: chapterIndex,
+          // 只有「继续阅读」那一次带页号；从目录点某一章时应该从该章第一页
+          // 开始，而不是跳到上次留下的页号。
+          initialPageIndex: roadIndex == widget.initialRoadIndex &&
+                  chapterIndex == widget.initialChapterIndex
+              ? widget.initialPageIndex
+              : 0,
+          initialPageAnchor: roadIndex == widget.initialRoadIndex &&
+                  chapterIndex == widget.initialChapterIndex
+              ? widget.initialPageAnchor
+              : 0,
         ),
       ),
     );
