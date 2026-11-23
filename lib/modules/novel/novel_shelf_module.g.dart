@@ -30,13 +30,17 @@ class NovelBookRecordAdapter extends TypeAdapter<NovelBookRecord> {
       chapterCount: fields[10] as int,
       onShelf: fields[11] as bool,
       addedAtMs: fields[12] as int,
+      // 13/14 是后加的字段：老记录里没有这两项，必须容错成 0，
+      // 否则升级后读旧书架会抛 null check。
+      lastPageIndex: (fields[13] as int?) ?? 0,
+      lastPageAnchor: (fields[14] as int?) ?? 0,
     );
   }
 
   @override
   void write(BinaryWriter writer, NovelBookRecord obj) {
     writer
-      ..writeByte(13)
+      ..writeByte(15)
       ..writeByte(0)
       ..write(obj.pluginName)
       ..writeByte(1)
@@ -62,7 +66,11 @@ class NovelBookRecordAdapter extends TypeAdapter<NovelBookRecord> {
       ..writeByte(11)
       ..write(obj.onShelf)
       ..writeByte(12)
-      ..write(obj.addedAtMs);
+      ..write(obj.addedAtMs)
+      ..writeByte(13)
+      ..write(obj.lastPageIndex)
+      ..writeByte(14)
+      ..write(obj.lastPageAnchor);
   }
 
   @override
