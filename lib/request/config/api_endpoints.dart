@@ -8,7 +8,7 @@ class ApiEndpoints {
   static const int apiLevel = 9;
 
   /// 项目主页
-  static const String projectUrl = "https://kazumi.app/";
+  static const String projectUrl = "https://github.com/lzjloveyjx/Kazumi";
 
   /// Github 项目主页
   static const String sourceUrl = "https://github.com/Predidit/Kazumi";
@@ -27,16 +27,22 @@ class ApiEndpoints {
   static const String gitcodeMirror =
       'https://raw.gitcode.com/gh_mirrors/ka/KazumiRules/raw/main/';
 
-  /// 在线升级
+  /// 在线升级：查自己的仓库，不是上游 Kazumi。
+  ///
+  /// 之前这里指向 Predidit/Kazumi，导致「检查更新」永远报「有新版本」——
+  /// 上游版本号比我们大，但那个包根本装不上（签名/包名都不同）。换成自己的
+  /// 仓库后，版本号比较才有意义。
   static const String latestApp =
-      'https://api.github.com/repos/Predidit/Kazumi/releases/latest';
+      'https://api.github.com/repos/lzjloveyjx/Kazumi/releases/latest';
 
   /// Bangumi 镜像测试后端
   static const String bangumiMirrorDomain = 'https://api.kazumi.fyi';
 
   /// Kazumi 镜像后端应用更新
-  static const String latestAppMirror =
-      '$bangumiMirrorDomain/kazumi/v1/app/latest';
+  ///
+  /// 上游的镜像后端只认官方版本号，我们用它会导致永远提示更新，
+  /// 所以直接复用 [latestApp]（GitHub API 自己就是稳定的）。
+  static const String latestAppMirror = latestApp;
 
   /// 弹弹官网
   static const String dandanIndex = 'https://www.dandanplay.com/';
