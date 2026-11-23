@@ -28,7 +28,6 @@ enum TtsEngineKind {
 class NovelTtsPlayer {
   NovelTtsPlayer({LocalTtsEngine? engine})
       : _engine = engine ?? LocalTtsEngine() {
-    _engine.onAudio = (audio) => _onAudio(audio);
   }
 
   final LocalTtsEngine _engine;
@@ -206,23 +205,29 @@ class NovelTtsPlayer {
     }
     _emitState(TtsPlaybackState.speaking);
     onSentenceChanged?.call(_index);
-    await _engine.synthesize(_sentences[_index].text, speed: _speed);
-    // 合成结果通过 onAudio 回调回来，见 _onAudio。
+    final audio = await _engine.synthesize(
+      _sentences[_index].text,
+      speed: _speed,
+    );
+    if (audio == null) {
+      // 没拿到音频：可能超时、可能引擎挂了。降级而不是静默。
+      await _fallbackToSystem();
+      return;
+    }
+    // 只走这一条播放路径。不要再挂 engine.onAudio —— 那样同一段会播两次
+    // （引擎先 complete 兑现 future，随后又回调一次）。
+    _awaitingSeq = audio.seq;
+    await _playSamples(audio);
   }
 
   int _awaitingSeq = -1;
 
-  void _onAudio(TtsAudio? audio) {
+  /// 合成失败时的降级：切系统 TTS 继续读，别让朗读卡死。
+  Future<void> _fallbackToSystem() async {
     if (_disposed) return;
-    if (audio == null) {
-      // 合成失败：退到系统通道读这一句，别让朗读卡死。
-      _notice('本地合成失败，改用系统朗读');
-      _kind = TtsEngineKind.system;
-      play(fromSentence: _index);
-      return;
-    }
-    _awaitingSeq = audio.seq;
-    _playSamples(audio);
+    _notice('本地合成失败，改用系统朗读');
+    _kind = TtsEngineKind.system;
+    await play(fromSentence: _index);
   }
 
   Future<void> _playSamples(TtsAudio audio) async {
@@ -231,19 +236,22 @@ class NovelTtsPlayer {
       final file = File('${dir.path}/tts_${audio.seq}.wav');
       await file.writeAsBytes(encodeWav(audio.samples, audio.sampleRate),
           flush: true);
-      await _player.open(Media(file.uri.toString()), play: true);
       // 播完自动下一句。用 stream 而不是 await open：open 只是开始，
       // 需要等 completed 才代表这一段读完。
-      final sub = _player.stream.completed.listen((done) {
+      //
+      // 先声明再赋值：listen 的回调里要用到 subscription 本身（读完了要
+      // cancel），如果写成 final sub = ....listen(cb) 那 cb 里引用 sub 时
+      // 它还没初始化，Dart 直接编译报错。
+      StreamSubscription<bool>? sub;
+      sub = _player.stream.completed.listen((done) {
         if (!done || _disposed) return;
-        sub.cancel();
-        _onSegmentDone(file);
+        sub?.cancel();
+        unawaited(_onSegmentDone(file));
       });
+      await _player.open(Media(file.uri.toString()), play: true);
     } catch (e) {
       KazumiLogger().w('neural tts play failed: $e');
-      _notice('播放失败，改用系统朗读');
-      _kind = TtsEngineKind.system;
-      play(fromSentence: _index);
+      await _fallbackToSystem();
     }
   }
 
