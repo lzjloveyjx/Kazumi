@@ -374,7 +374,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     // 点耳机默认从「当前页第一段」开始，而不是上次停在哪句。
     // 必须先 load 建好本章句子表，再用字符偏移反查句子下标。
     final pageStart = _currentPageCharOffset();
-    await _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
+    _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
     await _tts.load(
       paragraphs: _controller.paragraphs,
       indent: _prefs.indent,
@@ -438,7 +438,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     await _tts.stop();
     if (!mounted) return;
     // 先 load 一次建好本章句子表，再把字符偏移换成句子下标。
-    await _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
+    _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
     await _tts.load(
       paragraphs: _controller.paragraphs,
       indent: _prefs.indent,
@@ -459,7 +459,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   /// 和 _startTts 一样，但强制从指定句子开始（不走「当前页默认」逻辑）。
   Future<void> _startTtsFromSentence(int sentence) async {
-    await _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
+    _tts.cacheParagraphs(_controller.paragraphs, indent: _prefs.indent);
     await _tts.load(
       paragraphs: _controller.paragraphs,
       indent: _prefs.indent,
