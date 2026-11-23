@@ -9,6 +9,7 @@ import 'package:kazumi/repositories/collect_repository.dart';
 import 'package:kazumi/repositories/download_repository.dart';
 import 'package:kazumi/repositories/danmaku_shield_repository.dart';
 import 'package:kazumi/repositories/history_repository.dart';
+import 'package:kazumi/repositories/novel_shelf_repository.dart';
 import 'package:kazumi/repositories/search_history_repository.dart';
 import 'package:kazumi/services/download/download_manager.dart';
 import 'package:kazumi/services/player/audio_controller.dart';
@@ -31,6 +32,7 @@ final coreModule = createModule(
       ..addSingleton<ISearchHistoryRepository>(SearchHistoryRepository.new)
       ..addSingleton<ICollectCrudRepository>(CollectCrudRepository.new)
       ..addSingleton<IHistoryRepository>(HistoryRepository.new)
+      ..addSingleton<NovelShelfRepository>(NovelShelfRepository.new)
       ..addSingleton<IDownloadRepository>(DownloadRepository.new)
       ..addSingleton<IDanmakuShieldRepository>(DanmakuShieldRepository.new)
       // Service layer.
