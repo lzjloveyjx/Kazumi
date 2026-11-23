@@ -7,6 +7,7 @@ import 'package:kazumi/bean/widget/novel_cover_image.dart';
 import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/pages/novel/novel_reader_controller.dart';
 import 'package:kazumi/plugins/plugins.dart';
+import 'package:kazumi/repositories/novel_shelf_repository.dart';
 import 'package:kazumi/services/novel/novel_reader_prefs.dart';
 
 /// 小说阅读页。
@@ -27,6 +28,8 @@ class NovelReaderPage extends StatefulWidget {
     required this.plugin,
     required this.bookTitle,
     required this.roads,
+    this.coverUrl = '',
+    this.bookKey = '',
     this.initialRoadIndex = 0,
     this.initialChapterIndex = 0,
   });
@@ -34,6 +37,10 @@ class NovelReaderPage extends StatefulWidget {
   final Plugin plugin;
   final String bookTitle;
   final List<Road> roads;
+
+  /// 书籍身份，用于写阅读进度。空串表示不记录（例如直接进阅读页调试）。
+  final String coverUrl;
+  final String bookKey;
 
   /// 从哪条线路的第几章开始。目录页点某一章时传进来，直接跳到那一章。
   final int initialRoadIndex;
@@ -46,6 +53,7 @@ class NovelReaderPage extends StatefulWidget {
 class _NovelReaderPageState extends State<NovelReaderPage> {
   late final NovelReaderController _controller;
   late final NovelReaderPrefs _prefs;
+  late final NovelShelfRepository _shelfRepo;
   final ScrollController _scroll = ScrollController();
   late int _roadIndex = widget.initialRoadIndex;
   late int _chapterIndex = widget.initialChapterIndex;
@@ -70,6 +78,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   void initState() {
     super.initState();
     _prefs = inject<NovelReaderPrefs>();
+    _shelfRepo = inject<NovelShelfRepository>();
     _controller = NovelReaderController(
       plugin: widget.plugin,
       bookTitle: widget.bookTitle,
@@ -118,7 +127,33 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     setState(() => _chapterIndex = index);
     await _controller.openChapter(_urls[index], title: _titleAt(index));
     if (_scroll.hasClients) _scroll.jumpTo(0);
+    _recordProgress(index);
   }
+
+  /// 记录阅读进度。
+  ///
+  /// 在「章节切换成功之后」写，而不是在点开时写：切章可能因为网络失败而
+  /// 没真正读到，那种情况下把进度记成新章节，下次进来会跳到一章没读过的
+  /// 地方。这里 await 了 openChapter，失败了会走 error 分支。
+  void _recordProgress(int chapterIndex) {
+    if (widget.bookKey.isEmpty) return;
+    if (_controller.status != NovelChapterStatus.ready) return;
+    _shelfRepo.recordProgress(
+      pluginName: widget.plugin.name,
+      bookKey: widget.bookKey,
+      title: widget.bookTitle,
+      roadIndex: _roadIndex,
+      chapterIndex: chapterIndex,
+      chapterUrl: _urls[chapterIndex],
+      chapterTitle: _titleAt(chapterIndex),
+      cover: widget.coverUrl,
+      chapterCount: _totalChapters,
+    );
+  }
+
+  /// 全书章节总数（所有卷加在一起）。
+  int get _totalChapters =>
+      widget.roads.fold<int>(0, (sum, road) => sum + road.data.length);
 
   void _toggleBars() {
     setState(() => _barsVisible = !_barsVisible);
