@@ -615,6 +615,13 @@ class SettingsKeys {
     group: SettingGroup.novel,
   );
 
+  /// 阅读方式：paged（翻页）| scroll（上下滚动）。
+  static const novelPageMode = SettingKey<String>(
+    'novelPageMode',
+    'paged',
+    group: SettingGroup.novel,
+  );
+
   static final List<SettingKey<Object?>> all = [
     hAenable,
     hardwareDecoder,
@@ -728,6 +735,7 @@ class SettingsKeys {
     novelFontFamily,
     novelTheme,
     novelIndent,
+    novelPageMode,
   ];
 
   static List<SettingKey<Object?>> byGroup(SettingGroup group) {
