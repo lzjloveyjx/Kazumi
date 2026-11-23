@@ -1,7 +1,7 @@
 name: kazumi
 description: "青枢 — 轻小说与番剧阅读器"
 publish_to: "none"
-version: 0.3.2+302
+version: 0.4.0+400
 
 environment:
   sdk: ">=3.10.0 <4.0.0"
