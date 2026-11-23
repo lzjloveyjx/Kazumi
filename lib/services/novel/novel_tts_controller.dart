@@ -74,6 +74,14 @@ class NovelTtsController {
     await _tts.setPitch(pitch);
   }
 
+  /// 单独设置语速（Android 语义：1.0 正常，2.0 两倍速，0.5 半速）。
+  ///
+  /// 必须在 selectEngine 之后调用——切换引擎会重置语速。
+  Future<void> setRate(double rate) async {
+    await _ensureInit();
+    await _tts.setSpeechRate(rate);
+  }
+
   /// 列出系统里装的所有 TTS 引擎（含 MultiTTS 这类第三方引擎）。
   ///
   /// MultiTTS 的价值就在这：它把自己注册成系统 TTS 引擎，所以任何用
@@ -148,7 +156,7 @@ class NovelTtsController {
     _initialized = true;
 
     await _tts.setLanguage('zh-CN');
-    await _tts.setSpeechRate(0.5);
+    await _tts.setSpeechRate(1.0);
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
     // 让系统在每句结束后回调 completion，这是串行朗读的驱动来源。

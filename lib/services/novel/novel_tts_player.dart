@@ -154,6 +154,9 @@ class NovelTtsPlayer {
     if (_engineVoice.isNotEmpty) {
       await _system.selectVoice(_engineVoice);
     }
+    // 语速必须在选完引擎之后设——换引擎会重置语速。
+    // _speed 是倍率（0.8~2.0），正好也是 Android setSpeechRate 的语义。
+    await _system.setRate(_speed);
 
     // 把整章丢给 NovelTtsController，它自己串行。
     await _system.load(
