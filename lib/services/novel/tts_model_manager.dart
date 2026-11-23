@@ -138,7 +138,7 @@ class TtsModelManager {
     for (final prefix in mirrors) {
       final url = prefix.isEmpty
           ? 'https://github.com/$_releasePath'
-          : '$prefixhttps://github.com/$_releasePath';
+          : '${prefix}https://github.com/$_releasePath';
       final label = prefix.isEmpty ? '直连' : prefix;
       onMirror?.call(label);
       try {
