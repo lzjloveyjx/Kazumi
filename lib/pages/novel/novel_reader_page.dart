@@ -607,7 +607,14 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => _ReaderSettingsSheet(prefs: _prefs),
+      builder: (ctx) => _ReaderSettingsSheet(
+        prefs: _prefs,
+        onVoiceChanged: (id) {
+          _prefs.setTtsVoice(id);
+          // 停掉当前朗读，下次点播放就会用新音色（setVoice 会重置引擎）。
+          _tts.stop();
+        },
+      ),
     );
   }
 
@@ -1162,9 +1169,16 @@ class NovelHighlightColors {
 
 /// 阅读设置面板。
 class _ReaderSettingsSheet extends StatelessWidget {
-  const _ReaderSettingsSheet({required this.prefs});
+  const _ReaderSettingsSheet({
+    required this.prefs,
+    required this.onVoiceChanged,
+  });
 
   final NovelReaderPrefs prefs;
+
+  /// 切换音色：设置面板只负责改偏好，真正重启朗读引擎要由阅读页做
+  /// （那里才有 _tts）。
+  final void Function(String voiceId) onVoiceChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1354,12 +1368,8 @@ class _ReaderSettingsSheet extends StatelessWidget {
                         for (final v in TtsVoice.values)
                           ChoiceChip(
                             label: Text(v.label),
-                            selected: _prefs.ttsVoiceId == v.id,
-                            onSelected: (_) {
-                              _prefs.setTtsVoice(v.id);
-                              // 立即生效：停掉当前朗读，下次点播放用新音色
-                              _tts.stop();
-                            },
+                            selected: prefs.ttsVoiceId == v.id,
+                            onSelected: (_) => onVoiceChanged(v.id),
                           ),
                       ],
                     ),
