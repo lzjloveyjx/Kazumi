@@ -88,6 +88,8 @@ class NovelShelfRepository {
     String cover = '',
     String author = '',
     int chapterCount = 0,
+    int pageIndex = 0,
+    int pageAnchor = 0,
   }) async {
     final key = NovelBookRecord.keyOf(pluginName, bookKey);
     var record = _box.get(key);
@@ -108,6 +110,8 @@ class NovelShelfRepository {
     record.lastChapterTitle = chapterTitle;
     record.lastReadAtMs = DateTime.now().millisecondsSinceEpoch;
     if (chapterCount > 0) record.chapterCount = chapterCount;
+    record.lastPageIndex = pageIndex;
+    record.lastPageAnchor = pageAnchor;
     await _box.put(key, record);
   }
 
@@ -124,6 +128,8 @@ class NovelShelfRepository {
       record.lastChapterIndex = 0;
       record.lastChapterUrl = '';
       record.lastChapterTitle = '';
+      record.lastPageIndex = 0;
+      record.lastPageAnchor = 0;
       if (record.onShelf) {
         await _box.put(record.key, record);
       } else {
