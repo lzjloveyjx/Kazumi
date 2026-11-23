@@ -19,10 +19,15 @@ import 'package:kazumi/services/novel/tts_model_manager.dart';
 /// 为什么合成要开后台 isolate：VITS 推理一段几百字要几百毫秒到几秒，在
 /// 主 isolate 跑会直接卡住 UI（翻页、滚动全都停）。
 class LocalTtsEngine {
-  LocalTtsEngine({TtsModelManager? manager})
-      : _manager = manager ?? TtsModelManager();
+  LocalTtsEngine({TtsModelManager? manager, TtsVoice? voice})
+      : _manager = manager ?? TtsModelManager(),
+        _voice = voice ?? TtsVoice.xiaoYa;
 
   final TtsModelManager _manager;
+
+  /// 当前音色。换音色要重新 warmUp。
+  TtsVoice _voice;
+  TtsVoice get voice => _voice;
 
   IsolateHandle? _handle;
   bool _ready = false;
@@ -45,7 +50,7 @@ class LocalTtsEngine {
   String get error => _error;
 
   /// 模型是否已下载。
-  Future<bool> modelReady() => _manager.isReady();
+  Future<bool> modelReady([TtsVoice? v]) => _manager.isReady(v ?? _voice);
 
   /// 把随包模型释放到磁盘（首次使用）。[onProgress] 是 0~1。
   ///
@@ -53,8 +58,16 @@ class LocalTtsEngine {
   /// sherpa-onnx 的 C 接口要文件路径，读不了 Flutter asset 的字节流。
   Future<void> downloadModel({
     void Function(double progress)? onProgress,
+    TtsVoice? voice,
   }) {
-    return _manager.ensureReady(onProgress: onProgress);
+    return _manager.ensureReady(voice ?? _voice, onProgress: onProgress);
+  }
+
+  /// 切换音色。下次 warmUp 生效；正在朗读时调用会停止当前播放。
+  Future<void> setVoice(TtsVoice next) async {
+    if (next.id == _voice.id) return;
+    await dispose();
+    _voice = next;
   }
 
   /// 初始化引擎。已就绪时立即返回。
@@ -63,13 +76,20 @@ class LocalTtsEngine {
     _loading = true;
     _error = '';
     try {
-      if (!await _manager.isReady()) {
-        throw Exception('模型还没下载');
+      if (!await _manager.isReady(_voice)) {
+        throw Exception('模型还没释放');
       }
-      final dir = await _manager.modelDir();
+      final dir = await _manager.voiceDir(_voice);
+
+      // onnx 文件名随音色不同（zh_CN-xiao_ya-medium.onnx），扫出来。
+      final onnx = (await dir
+              .list()
+              .where((e) => e is File && e.path.endsWith('.onnx'))
+              .toList())
+          .first as File;
 
       final handle = IsolateHandle(
-        modelPath: '${dir.path}/model.onnx',
+        modelPath: onnx.path,
         tokensPath: '${dir.path}/tokens.txt',
         lexiconPath: '${dir.path}/lexicon.txt',
       );

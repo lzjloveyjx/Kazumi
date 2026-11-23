@@ -181,7 +181,8 @@ flutter:
     - assets/rules/novel/
     # 离线语音模型（sherpa-onnx VITS 中文，31MB）。
     # 自用版本直接打进包：不用下载、不受网络影响。APK 会因此涨到 ~72MB。
-    - assets/tts/vits-icefall-zh-aishell3/
+    - assets/tts/xiao_ya/
+    - assets/tts/chaowen/
     - assets/images/logo/
     - assets/statements/
     - licenses/ech_http/

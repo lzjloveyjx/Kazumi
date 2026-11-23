@@ -629,6 +629,13 @@ class SettingsKeys {
     group: SettingGroup.novel,
   );
 
+  /// 朗读音色 id（见 TtsVoice.values）。
+  static const novelTtsVoice = SettingKey<String>(
+    'novelTtsVoice',
+    'xiao_ya',
+    group: SettingGroup.novel,
+  );
+
   /// 朗读语速。0.5 是系统 TTS 的中速，中文听感接近正常说话。
   static const novelTtsRate = SettingKey<double>(
     'novelTtsRate',

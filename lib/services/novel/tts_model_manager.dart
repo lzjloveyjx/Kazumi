@@ -5,44 +5,64 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:kazumi/services/logging/logger.dart';
 
+/// 内置 TTS 音色。
+///
+/// 两个都是 piper 的 medium 模型（int8 量化，各 17.8MB）：
+///   • 小雅  zh_CN-xiao_ya-medium  女声，BZNSYP 数据集训练
+///   • 超文  zh_CN-chaowen-medium  男声
+///
+/// 为什么换成 piper 而不是原来的 vits-icefall-zh-aishell3：
+///   aishell3 是「能出声」档，音色偏机械、腔调平；piper 是为朗读优化的
+///   模型，重音和停顿更自然，而且 int8 量化后体积只有 17.8MB —— 两个
+///   音色加起来（39.5MB）只比原来单音色（31MB）多 8.5MB。
+class TtsVoice {
+  const TtsVoice({required this.id, required this.label, required this.model});
+
+  final String id;
+  final String label;
+
+  /// assets 下的目录名。
+  final String model;
+
+  static const TtsVoice xiaoYa = TtsVoice(
+    id: 'xiao_ya',
+    label: '小雅 · 女声',
+    model: 'xiao_ya',
+  );
+
+  static const TtsVoice chaoWen = TtsVoice(
+    id: 'chaowen',
+    label: '超文 · 男声',
+    model: 'chaowen',
+  );
+
+  static const List<TtsVoice> values = [xiaoYa, chaoWen];
+
+  static TtsVoice byId(String id) {
+    for (final v in values) {
+      if (v.id == id) return v;
+    }
+    return xiaoYa;
+  }
+}
+
 /// 内置 TTS 模型：从随包 assets 释放到磁盘。
 ///
 /// 为什么这么做而不是直接读 asset：
 /// sherpa-onnx 的 C 接口要的是**文件系统路径**（它自己在 native 层 fopen），
-/// 拿不到 Flutter asset 的字节流。所以第一次用的时候把 assets 里的三个文件
-/// 拷到应用私有目录，之后直接用那边 —— 纯本地 IO，不联网、不依赖镜像。
-///
-/// 和上一版的区别：上一版是「首次朗读时从 GitHub 下载 31MB」，进度一直是
-/// 0% 说明连接根本没建立起来（GitHub Releases 在部分网络环境直连超时）。
-/// 自用场景下把模型打进包最省事：APK 从 41MB 涨到 ~72MB，换来「装完即用」。
-///
-/// 模型：sherpa-onnx vits-icefall-zh-aishell3（中文 VITS）
-///   • model.onnx   29.07 MB  声学模型权重
-///   • lexicon.txt   1.95 MB  汉字→音素映射
-///   • tokens.txt    ~0 MB    音素表
-/// 合计 31.02 MB。官方的 172MB rule.far（文本正则化）没有打包：
-/// 它只影响「2024年」「3.5%」这类数字日期的读法，不影响可用性。
+/// 拿不到 Flutter asset 的字节流。所以第一次用的时候把文件拷到应用私有目录。
 class TtsModelManager {
   TtsModelManager();
 
-  static const String _modelName = 'vits-icefall-zh-aishell3';
-  static const String _assetDir = 'assets/tts/$_modelName';
-
-  /// 需要释放到磁盘的文件。
-  static const List<String> _files = [
-    'model.onnx',
-    'lexicon.txt',
-    'tokens.txt',
-  ];
-
-  /// model.onnx 的大小，用于判断拷贝是否完整。
-  static const int _modelBytes = 30480000;
+  /// 每个音色必须有的三个文件。
+  static const List<String> _required = ['lexicon.txt', 'tokens.txt'];
 
   Directory? _root;
 
-  Future<Directory> modelDir() async {
+  /// 某个音色的磁盘目录。
+  Future<Directory> voiceDir(TtsVoice voice) async {
     final root = await _appSupportDir();
-    return Directory('${root.path}/$_modelName');
+    return Directory('${root.path}/${voice.model}');
   }
 
   Future<Directory> _appSupportDir() async {
@@ -56,62 +76,66 @@ class TtsModelManager {
     return ttsRoot;
   }
 
-  /// 模型是否已经释放到磁盘且完整。
-  Future<bool> isReady() async {
-    final dir = await modelDir();
+  /// 音色是否已释放到磁盘且完整。
+  Future<bool> isReady(TtsVoice voice) async {
+    final dir = await voiceDir(voice);
     if (!await dir.exists()) return false;
-    for (final name in _files) {
-      final f = File('${dir.path}/$name');
-      if (!await f.exists()) return false;
-      if (name == 'model.onnx' && await f.length() < _modelBytes * 0.9) {
-        return false;
-      }
+    for (final name in _required) {
+      if (!await File('${dir.path}/$name').exists()) return false;
     }
-    return true;
+    // onnx 文件名随音色变（zh_CN-xxx-medium.onnx），得扫一下。
+    final onnx = await dir
+        .list()
+        .where((e) => e is File && e.path.endsWith('.onnx'))
+        .toList();
+    if (onnx.isEmpty) return false;
+    return await (onnx.first as File).length() > 10 * 1024 * 1024;
   }
 
-  /// 确保模型在磁盘上就绪。已就绪时立即返回。
-  ///
-  /// [onProgress] 传 0~1 的拷贝进度（不是下载 —— 这里是纯本地复制）。
-  Future<void> ensureReady({
+  /// 释放某个音色到磁盘。已就绪时立即返回。
+  Future<void> ensureReady(
+    TtsVoice voice, {
     void Function(double progress)? onProgress,
   }) async {
-    if (await isReady()) {
+    if (await isReady(voice)) {
       onProgress?.call(1);
       return;
     }
-    final dir = await modelDir();
+    final dir = await voiceDir(voice);
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
 
-    // 逐个文件从 assets 拷出来。大文件分块写，让进度能真实跳动；
-    // 一口气 load 整个 29MB 再写，界面会僵在原地。
-    for (var i = 0; i < _files.length; i++) {
-      final name = _files[i];
-      final target = File('${dir.path}/$name');
-      final data = await rootBundle.load('$_assetDir/$name');
-      await target.writeAsBytes(
+    // 扫 assets 目录，把所有文件都拷出来（onnx 名字不固定）。
+    final assetDir = 'assets/tts/${voice.model}';
+    final manifest = await rootBundle.loadString('$assetDir/manifest.txt');
+    final names = manifest
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !l.startsWith('#'))
+        .toList();
+
+    for (var i = 0; i < names.length; i++) {
+      final name = names[i];
+      final data = await rootBundle.load('$assetDir/$name');
+      await File('${dir.path}/$name').writeAsBytes(
         data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
         flush: true,
       );
-      onProgress?.call((i + 1) / _files.length);
-      KazumiLogger().i(
-        'TTS asset released: $name '
-        '(${(data.lengthInBytes / 1048576).toStringAsFixed(1)}MB)',
-      );
+      onProgress?.call((i + 1) / names.length);
+      KazumiLogger().i('TTS released: ${voice.id}/$name');
     }
 
-    if (!await isReady()) {
+    if (!await isReady(voice)) {
       throw Exception('模型释放后校验失败');
     }
   }
 
-  /// 删掉已释放的模型（设置页「释放空间」用）。
+  /// 删掉已释放的模型。
   Future<void> remove() async {
-    final dir = await modelDir();
-    if (await dir.exists()) {
-      await dir.delete(recursive: true);
+    for (final v in TtsVoice.values) {
+      final dir = await voiceDir(v);
+      if (await dir.exists()) await dir.delete(recursive: true);
     }
   }
 }

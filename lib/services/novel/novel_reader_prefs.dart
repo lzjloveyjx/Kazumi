@@ -170,6 +170,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   bool _indent = true;
   String _pageMode = 'paged';
   String _pageAnimation = 'curl';
+  String _ttsVoiceId = 'xiao_ya';
   double _ttsRate = 0.5;
   double _ttsPitch = 1.0;
   bool _ttsAutoNext = true;
@@ -204,6 +205,12 @@ class NovelReaderPrefs extends ChangeNotifier {
   String get pageAnimation {
     _ensureLoaded();
     return _pageAnimation;
+  }
+
+  /// 朗读音色 id。运行时通过 TtsVoice.byId 转成音色对象。
+  String get ttsVoiceId {
+    _ensureLoaded();
+    return _ttsVoiceId;
   }
 
   double get ttsRate {
@@ -329,6 +336,14 @@ class NovelReaderPrefs extends ChangeNotifier {
     if (value == _pageAnimation) return;
     _pageAnimation = value;
     GStorage.putSetting(SettingsKeys.novelPageAnimation, value);
+    notifyListeners();
+  }
+
+  void setTtsVoice(String id) {
+    _ensureLoaded();
+    if (id == _ttsVoiceId) return;
+    _ttsVoiceId = id;
+    GStorage.putSetting(SettingsKeys.novelTtsVoice, id);
     notifyListeners();
   }
 

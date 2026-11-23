@@ -1,0 +1,3 @@
+lexicon.txt
+tokens.txt
+zh_CN-chaowen-medium.onnx
