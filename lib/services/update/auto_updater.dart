@@ -94,8 +94,11 @@ List<String> getUpdateFilePatterns(InstallationType installationType) {
       return ['windows', '.zip'];
     case InstallationType.macosDmg:
       return ['macos', '.dmg'];
+    // 我们的 APK 用 --split-per-abi 产出，文件名是
+    // app-arm64-v8a-release.apk，不含 "android"。所以只按扩展名匹配，
+    // 命中多个时取第一个（arm64-v8a 排在最前，覆盖绝大多数设备）。
     case InstallationType.androidApk:
-      return ['android', '.apk'];
+      return ['.apk'];
     case InstallationType.linuxDeb:
     case InstallationType.linuxTar:
     case InstallationType.ios:
@@ -134,8 +137,10 @@ class AutoUpdater {
         throw Exception('无效的响应数据');
       }
 
-      final remoteVersion = data['tag_name'] as String;
-      final currentVersion = ApiEndpoints.version;
+      // tag 形如 v0.3.0-qingshu，直接喂给 needUpdate 会在 int.parse("v0")
+      // 上抛 FormatException，整个检查更新静默失败。先剥掉前缀和后缀。
+      final remoteVersion = _normalizeVersionTag(data['tag_name'] as String);
+      final currentVersion = _normalizeVersionTag(ApiEndpoints.version);
 
       if (needUpdate(currentVersion, remoteVersion)) {
         final availableTypes = _detectAvailableInstallationTypes();
@@ -157,6 +162,20 @@ class AutoUpdater {
       KazumiLogger().e('Update: check for updates failed', error: e);
       rethrow;
     }
+  }
+
+  /// 把 `v0.3.0-qingshu` / `0.3.0+300` 这类串压成纯数字点分版本 `0.3.0`。
+  ///
+  /// needUpdate 内部用 int.parse 逐段比较，遇到 'v' 或 '-' 会抛异常。
+  /// 只取前三段数字，足够做「有没有新版本」的判断。
+  static String _normalizeVersionTag(String raw) {
+    final match = RegExp(r'(\d+(?:\.\d+){0,2})').firstMatch(raw.trim());
+    if (match == null) return '0.0.0';
+    final parts = match.group(1)!.split('.');
+    while (parts.length < 3) {
+      parts.add('0');
+    }
+    return parts.take(3).join('.');
   }
 
   Future<Map<String, dynamic>> _latestRelease() async {
@@ -516,6 +535,6 @@ class AutoUpdater {
     } else if (Platform.isAndroid) {
       extension = '.apk';
     }
-    return 'Kazumi-$version$extension';
+    return '青枢-$version$extension';
   }
 }
