@@ -56,7 +56,7 @@ class _ExitConfirmationDialogState extends State<ExitConfirmationDialog> {
         ),
       ),
       titlePadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      title: const Text('关闭 Kazumi？', textAlign: TextAlign.center),
+      title: const Text('关闭青枢？', textAlign: TextAlign.center),
       titleTextStyle: theme.textTheme.headlineSmall?.copyWith(
         color: colors.onSurface,
         fontWeight: FontWeight.w600,
@@ -132,7 +132,7 @@ class _ExitConfirmationDialogState extends State<ExitConfirmationDialog> {
         ),
       ExitDialogAction.exit => (
           Icons.power_settings_new_rounded,
-          '退出 Kazumi',
+          '退出青枢',
         ),
     };
     final selected = _action == action;
