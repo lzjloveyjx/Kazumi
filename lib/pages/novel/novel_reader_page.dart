@@ -8,20 +8,19 @@ import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/pages/novel/novel_reader_controller.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/repositories/novel_shelf_repository.dart';
+import 'package:kazumi/services/novel/novel_paginator.dart';
 import 'package:kazumi/services/novel/novel_reader_prefs.dart';
 
 /// 小说阅读页。
 ///
-/// 输入：一条规则（[Plugin]）+ 书名 + 该书的章节线路（[Road]，规则引擎
-/// 已经解析好的 chapterRoads/chapterResult 结果）。
+/// 两种阅读方式，由 [NovelReaderPrefs.pagedMode] 切换：
+///   • 翻页（默认）：一章切成若干页，左右滑动/点两侧翻页，进度精确到「第几页」
+///   • 滚动：整章长滚动，进度只到「第几章」
 ///
-/// 设计取舍：
-///   • 不做分页，直接长滚动 —— 中文网文一章动辄几千字，分页反而更难读
-///   • 顶栏/底栏是**浮层**，不占布局：点屏幕中间可以收起来，收起来之后
-///     整屏都是正文，这才是「看书」而不是「看网页」
-///   • 左右两侧留了点按热区（左 1/3 上一章、右 1/3 下一章），和主流阅读器
-///     一致，省得每次都去够底栏
-///   • 字号/行距/边距/字体/背景全部走 [NovelReaderPrefs]，改完立刻生效
+/// 为什么翻页要自己算：见 NovelPaginator 的注释 —— 必须在「行」这一层切，
+/// 否则会出现半行被截断、标点跑到行首这类问题。
+///
+/// 顶栏/底栏是浮层，点屏幕中间收起，收起后整屏都是正文。
 class NovelReaderPage extends StatefulWidget {
   const NovelReaderPage({
     super.key,
@@ -32,19 +31,24 @@ class NovelReaderPage extends StatefulWidget {
     this.bookKey = '',
     this.initialRoadIndex = 0,
     this.initialChapterIndex = 0,
+    this.initialPageIndex = 0,
+    this.initialPageAnchor = 0,
   });
 
   final Plugin plugin;
   final String bookTitle;
   final List<Road> roads;
 
-  /// 书籍身份，用于写阅读进度。空串表示不记录（例如直接进阅读页调试）。
+  /// 书籍身份，用于写阅读进度。空串表示不记录。
   final String coverUrl;
   final String bookKey;
 
-  /// 从哪条线路的第几章开始。目录页点某一章时传进来，直接跳到那一章。
   final int initialRoadIndex;
   final int initialChapterIndex;
+
+  /// 上次读到那一章的第几页，以及那一页的段落锚点。
+  final int initialPageIndex;
+  final int initialPageAnchor;
 
   @override
   State<NovelReaderPage> createState() => _NovelReaderPageState();
@@ -54,25 +58,42 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   late final NovelReaderController _controller;
   late final NovelReaderPrefs _prefs;
   late final NovelShelfRepository _shelfRepo;
+
+  /// 滚动模式用的控制器。
   final ScrollController _scroll = ScrollController();
+
+  /// 翻页模式用的控制器。分页结果变了要重建它。
+  PageController? _pageController;
+
   late int _roadIndex = widget.initialRoadIndex;
   late int _chapterIndex = widget.initialChapterIndex;
 
   /// 顶栏/底栏是否可见。
   bool _barsVisible = true;
 
-  /// 点按判定用的按下状态。
-  ///
-  /// 为什么不用 GestureDetector.onTapUp：正文外面套了 SelectionArea，
-  /// 它自己也会抢 tap（用来取消选区），而手势竞技场里**更深的 widget 先赢**，
-  /// 外层 GestureDetector 的 onTapUp 永远等不到。Listener 不进竞技场、
-  /// 只是旁听指针事件，所以这里自己判「短按且几乎没移动」。
+  /// 当前章的分页结果。
+  List<NovelPage> _pages = const [];
+
+  /// 当前页码（翻页模式）。
+  int _pageIndex = 0;
+
+  /// 上一次分页用的参数指纹。参数没变就不重新分页 —— 否则每次 build
+  /// （包括收起工具栏）都会重排一遍，卡且会丢当前位置。
+  String _layoutKey = '';
+
+  /// 打开新章后，第一次分页完成时要把位置恢复到上次读的地方。
+  bool _pendingRestore = false;
+
+  /// 点按判定用的按下状态。见 [_onPointerUp] 的注释。
   Offset? _downPosition;
   DateTime? _downTime;
 
   Road get _road => widget.roads[_roadIndex];
   List<String> get _urls => _road.data;
   List<String> get _names => _road.identifier;
+
+  int get _totalChapters =>
+      widget.roads.fold<int>(0, (sum, road) => sum + road.data.length);
 
   @override
   void initState() {
@@ -86,17 +107,16 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       dropSelector: widget.plugin.chapterDrop,
     );
     _controller.addListener(_onControllerChanged);
-    // 夹一下越界：目录页传进来的索引可能因为规则变更而失效。
+
     if (_roadIndex < 0 || _roadIndex >= widget.roads.length) _roadIndex = 0;
     if (_chapterIndex < 0 || _chapterIndex >= _urls.length) _chapterIndex = 0;
+
     if (_urls.isNotEmpty) {
+      _pendingRestore = true;
       _open(_chapterIndex);
     }
+
     // 阅读时进入沉浸式：隐藏系统状态栏与手势条，整屏都是正文。
-    //
-    // 用 immersiveSticky 而不是 immersive：sticky 在用户从边缘滑动时
-    // 临时露出系统栏、几秒后自动再藏起来，而 immersive 会一直藏着直到
-    // 代码主动恢复 —— 那样用户想下拉通知栏会很别扭。
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
@@ -108,11 +128,17 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     _controller.removeListener(_onControllerChanged);
     _controller.dispose();
     _scroll.dispose();
+    _pageController?.dispose();
     super.dispose();
   }
 
   void _onControllerChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {
+      // 正文换了，旧分页作废。
+      _layoutKey = '';
+      _pages = const [];
+    });
   }
 
   String _titleAt(int index) {
@@ -124,36 +150,116 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   Future<void> _open(int index) async {
     if (index < 0 || index >= _urls.length) return;
-    setState(() => _chapterIndex = index);
+    setState(() {
+      _chapterIndex = index;
+      _pageIndex = 0;
+      _pages = const [];
+      _layoutKey = '';
+    });
     await _controller.openChapter(_urls[index], title: _titleAt(index));
     if (_scroll.hasClients) _scroll.jumpTo(0);
-    _recordProgress(index);
+    // 这里**不**记进度：分页还没算出来，_pages 是空的，此时写会把
+    // pageIndex/anchor 都写成 0，把刚恢复的位置冲掉。进度改由
+    // _restorePosition（分页完成后）和 onPageChanged（翻页时）来写。
   }
 
-  /// 记录阅读进度。
+  // ── 分页 ────────────────────────────────────────────────────────────────
+
+  /// 按当前排版参数分页。
   ///
-  /// 在「章节切换成功之后」写，而不是在点开时写：切章可能因为网络失败而
-  /// 没真正读到，那种情况下把进度记成新章节，下次进来会跳到一章没读过的
-  /// 地方。这里 await 了 openChapter，失败了会走 error 分支。
-  void _recordProgress(int chapterIndex) {
+  /// 只在参数变化时执行。[maxHeight] 是正文可用高度（已扣掉页边距和工具栏）。
+  void _paginateIfNeeded({
+    required double width,
+    required double height,
+    required TextScaler textScaler,
+    required bool needRestore,
+  }) {
+    final style = _prefs.textStyle;
+    final key = [
+      _chapterIndex,
+      _roadIndex,
+      width.round(),
+      height.round(),
+      style.fontSize,
+      style.height,
+      style.fontFamily,
+      _prefs.indent,
+      textScaler.scale(100).round(),
+    ].join('|');
+    if (key == _layoutKey) {
+      // 参数没变，但如果这一章刚打开、还没恢复过位置，仍然要恢复。
+      if (needRestore && _pages.isNotEmpty) _restorePosition();
+      return;
+    }
+    _layoutKey = key;
+    _pages = const NovelPaginator().paginate(
+      paragraphs: _controller.paragraphs,
+      style: style,
+      maxWidth: width,
+      maxHeight: height,
+      indent: _prefs.indent,
+      paragraphSpacing: _prefs.fontSize * 0.72,
+      textScaler: textScaler,
+    );
+    if (needRestore) {
+      _restorePosition();
+    } else {
+      _pageIndex = _pageIndex.clamp(0, (_pages.length - 1).clamp(0, 1 << 30));
+    }
+  }
+
+  /// 恢复到上次读到的那一页。
+  ///
+  /// 优先用段落锚点反查：字号变了页数会全变，但「第 N 段在哪一页」是稳的。
+  /// 找不到锚点就退回页码（可能因为页数变少而越界，clamp 一下）。
+  void _restorePosition() {
+    _pendingRestore = false;
+    if (_pages.isEmpty) return;
+    var target = widget.initialPageIndex;
+    final anchor = widget.initialPageAnchor;
+    if (anchor > 0) {
+      for (var i = _pages.length - 1; i >= 0; i--) {
+        if (_pages[i].firstParagraphIndex <= anchor) {
+          target = i;
+          break;
+        }
+      }
+    }
+    target = target.clamp(0, _pages.length - 1);
+    _pageIndex = target;
+    // PageController 可能还没建好，下一帧再跳。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_pageController?.hasClients ?? false) {
+        _pageController!.jumpToPage(target);
+      }
+      // 位置确定之后再写一次，保证「读到第几页」跟着实际落点走。
+      _recordProgress();
+    });
+  }
+
+  void _recordProgress() {
     if (widget.bookKey.isEmpty) return;
     if (_controller.status != NovelChapterStatus.ready) return;
+    final anchor = _pages.isNotEmpty && _pageIndex < _pages.length
+        ? _pages[_pageIndex].firstParagraphIndex
+        : 0;
     _shelfRepo.recordProgress(
       pluginName: widget.plugin.name,
       bookKey: widget.bookKey,
       title: widget.bookTitle,
       roadIndex: _roadIndex,
-      chapterIndex: chapterIndex,
-      chapterUrl: _urls[chapterIndex],
-      chapterTitle: _titleAt(chapterIndex),
+      chapterIndex: _chapterIndex,
+      chapterUrl: _urls[_chapterIndex],
+      chapterTitle: _titleAt(_chapterIndex),
       cover: widget.coverUrl,
       chapterCount: _totalChapters,
+      pageIndex: _pageIndex,
+      pageAnchor: anchor,
     );
   }
 
-  /// 全书章节总数（所有卷加在一起）。
-  int get _totalChapters =>
-      widget.roads.fold<int>(0, (sum, road) => sum + road.data.length);
+  // ── 交互 ────────────────────────────────────────────────────────────────
 
   void _toggleBars() {
     setState(() => _barsVisible = !_barsVisible);
@@ -176,52 +282,80 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     _handleTap(event.localPosition.dx);
   }
 
-  /// 点按热区：左 1/3 上一章，右 1/3 下一章，中间收起/展开工具栏。
+  /// 点按热区：左 1/3 上一页/上一章，右 1/3 下一页/下一章，中间收工具栏。
   void _handleTap(double dx) {
     final width = MediaQuery.of(context).size.width;
     if (dx < width / 3) {
-      if (_chapterIndex > 0) {
-        _open(_chapterIndex - 1);
-      } else {
-        _toggleBars();
-      }
-      return;
+      _previous();
+    } else if (dx > width * 2 / 3) {
+      _next();
+    } else {
+      _toggleBars();
     }
-    if (dx > width * 2 / 3) {
-      if (_chapterIndex + 1 < _urls.length) {
-        _open(_chapterIndex + 1);
-      } else {
-        _toggleBars();
-      }
-      return;
-    }
-    _toggleBars();
   }
 
-  Future<void> _pickRoad() async {
-    if (widget.roads.length < 2) return;
-    final picked = await showModalBottomSheet<int>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            for (var i = 0; i < widget.roads.length; i++)
-              ListTile(
-                title: Text('线路 ${i + 1}（${widget.roads[i].data.length} 章）'),
-                selected: i == _roadIndex,
-                onTap: () => Navigator.of(ctx).pop(i),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (picked == null || picked == _roadIndex) return;
-    setState(() {
-      _roadIndex = picked;
-      _chapterIndex = 0;
+  /// 上一页；已经是本页第一页就翻到上一章最后一页。
+  void _previous() {
+    if (_prefs.pagedMode) {
+      if (_pageIndex > 0) {
+        _pageController?.previousPage(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+        return;
+      }
+      if (_chapterIndex > 0) {
+        _openAtLastPage(_chapterIndex - 1);
+        return;
+      }
+      _toggleBars();
+      return;
+    }
+    // 滚动模式：只能翻章
+    if (_chapterIndex > 0) {
+      _open(_chapterIndex - 1);
+    } else {
+      _toggleBars();
+    }
+  }
+
+  /// 下一页；已经是本页最后一页就翻到下一章第一页。
+  void _next() {
+    if (_prefs.pagedMode) {
+      if (_pageIndex + 1 < _pages.length) {
+        _pageController?.nextPage(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+        return;
+      }
+      if (_chapterIndex + 1 < _urls.length) {
+        _open(_chapterIndex + 1);
+        return;
+      }
+      _toggleBars();
+      return;
+    }
+    if (_chapterIndex + 1 < _urls.length) {
+      _open(_chapterIndex + 1);
+    } else {
+      _toggleBars();
+    }
+  }
+
+  /// 打开上一章并跳到最后一页 —— 从后往前读时应该落在章末，不是章首。
+  Future<void> _openAtLastPage(int chapterIndex) async {
+    await _open(chapterIndex);
+    if (!mounted || _pages.isEmpty) return;
+    final last = _pages.length - 1;
+    setState(() => _pageIndex = last);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_pageController?.hasClients ?? false) {
+        _pageController!.jumpToPage(last);
+      }
+      _recordProgress();
     });
-    await _open(0);
   }
 
   Future<void> _pickChapter() async {
@@ -256,41 +390,13 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     );
   }
 
-  /// 抽取器把 <img> 折成了 `[图片] <url>` 一行文本 —— 这样正文仍是纯文本、
-  /// 便于段落切分与选择复制。这里再把它认出来还原成图片控件。
-  static const String _imageMarker = '[图片] ';
-
   /// 图片防盗链用的 Referer：优先取规则里声明的，否则退回站点根。
   String get _imageReferer {
     final referer = widget.plugin.referer.trim();
-    if (referer.isNotEmpty) return referer;
-    return widget.plugin.baseUrl;
+    return referer.isNotEmpty ? referer : widget.plugin.baseUrl;
   }
 
-  Widget _paragraph(String text) {
-    if (!text.startsWith(_imageMarker)) {
-      // 首行缩进用两个全角空格，比 TextIndent 更贴近中文排版习惯：
-      // 段落换行后缩进自然对齐，也不会在图片段落上多出一截空白。
-      final body = _prefs.indent ? '\u3000\u3000$text' : text;
-      return Text(body, style: _prefs.textStyle);
-    }
-    final url = text.substring(_imageMarker.length).trim();
-    if (!url.startsWith('http')) {
-      return const SizedBox.shrink();
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        // 插图同样要走带 UA 的加载器：图床对 dart:io 默认 UA 返 403。
-        child: NovelCoverImage(
-          url: url,
-          referer: _imageReferer,
-          fit: BoxFit.contain,
-        ),
-      ),
-    );
-  }
+  // ── 构建 ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -299,11 +405,10 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       builder: (context, _) {
         final preset = _prefs.theme;
         final media = MediaQuery.of(context);
-        // 工具栏收起时不再给它留位置 —— 否则「收起」只是视觉上滑走，
-        // 正文上方还空着一条，等于没全屏。
         final topInset =
             _barsVisible ? media.padding.top + kToolbarHeight : media.padding.top;
-        final bottomInset = _barsVisible ? media.padding.bottom + 64 : media.padding.bottom;
+        final bottomInset =
+            _barsVisible ? media.padding.bottom + 64 : media.padding.bottom;
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: preset.isDark
               ? SystemUiOverlayStyle.light
@@ -312,7 +417,9 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
             backgroundColor: preset.background,
             body: Stack(
               children: [
-                Positioned.fill(child: _buildContent(preset, topInset, bottomInset)),
+                Positioned.fill(
+                  child: _buildContent(preset, topInset, bottomInset, media),
+                ),
                 Positioned(
                   top: 0,
                   left: 0,
@@ -337,70 +444,134 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     NovelThemePreset preset,
     double topInset,
     double bottomInset,
+    MediaQueryData media,
   ) {
     final status = _controller.status;
-    switch (status) {
-      case NovelChapterStatus.idle:
-      case NovelChapterStatus.loading:
-        return Center(
-          child: CircularProgressIndicator(color: preset.secondary),
-        );
-      case NovelChapterStatus.error:
-        return GeneralEmptyState(
-          icon: Icons.menu_book_outlined,
-          title: _controller.error.isEmpty ? '这一章读不出来' : _controller.error,
-          actions: [
-            FilledButton(
-              onPressed: () => _open(_chapterIndex),
-              child: const Text('重试'),
+    if (status == NovelChapterStatus.idle ||
+        status == NovelChapterStatus.loading) {
+      return Center(child: CircularProgressIndicator(color: preset.secondary));
+    }
+    if (status == NovelChapterStatus.error) {
+      return GeneralEmptyState(
+        icon: Icons.menu_book_outlined,
+        title: _controller.error.isEmpty ? '这一章读不出来' : _controller.error,
+        actions: [
+          FilledButton(
+            onPressed: () => _open(_chapterIndex),
+            child: const Text('重试'),
+          ),
+        ],
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 正文可用区域：扣掉左右页边距与上下工具栏。
+        final width = constraints.maxWidth - _prefs.margin * 2;
+        final height = constraints.maxHeight - topInset - bottomInset - 20;
+        if (_prefs.pagedMode) {
+          _paginateIfNeeded(
+            width: width,
+            height: height,
+            textScaler: media.textScaler,
+            needRestore: _pendingRestore,
+          );
+          return _buildPaged(preset, width, height);
+        }
+        return _buildScroll(preset, topInset, bottomInset);
+      },
+    );
+  }
+
+  /// 翻页模式的正文。
+  Widget _buildPaged(NovelThemePreset preset, double width, double height) {
+    if (_pages.isEmpty) {
+      return const Center(child: SizedBox.shrink());
+    }
+    _pageController ??= PageController(initialPage: _pageIndex);
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: _onPointerDown,
+      onPointerUp: _onPointerUp,
+      child: PageView.builder(
+        controller: _pageController,
+        itemCount: _pages.length,
+        onPageChanged: (index) {
+          setState(() => _pageIndex = index);
+          _recordProgress();
+        },
+        itemBuilder: (context, index) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            _prefs.margin,
+            _barsVisible ? kToolbarHeight + 8 : 8,
+            _prefs.margin,
+            _barsVisible ? 64 : 8,
+          ),
+          child: _PageView(
+            page: _pages[index],
+            prefs: _prefs,
+            referer: _imageReferer,
+            maxHeight: height,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 滚动模式的正文（原长滚动实现）。
+  Widget _buildScroll(
+    NovelThemePreset preset,
+    double topInset,
+    double bottomInset,
+  ) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: _onPointerDown,
+      onPointerUp: _onPointerUp,
+      child: SelectionArea(
+        child: ListView(
+          controller: _scroll,
+          padding: EdgeInsets.fromLTRB(
+            _prefs.margin,
+            topInset + 20,
+            _prefs.margin,
+            bottomInset + 24,
+          ),
+          children: [
+            Text(
+              _controller.chapterTitle.isEmpty
+                  ? _titleAt(_chapterIndex)
+                  : _controller.chapterTitle,
+              style: _prefs.titleStyle,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${_chapterIndex + 1} / ${_urls.length}',
+              style: _prefs.captionStyle,
+            ),
+            const SizedBox(height: 20),
+            for (final block in NovelPaginator()
+                .blocksOf(_controller.paragraphs, indent: _prefs.indent))
+              Padding(
+                padding: EdgeInsets.only(bottom: _prefs.fontSize * 0.72),
+                child: _BlockView(
+                  block: block,
+                  prefs: _prefs,
+                  referer: _imageReferer,
+                ),
+              ),
+            const SizedBox(height: 12),
+            Text(
+              _chapterIndex + 1 < _urls.length
+                  ? '（本章完，点击屏幕右侧看下一章）'
+                  : '（全书完）',
+              textAlign: TextAlign.center,
+              style: _prefs.captionStyle,
             ),
           ],
-        );
-      case NovelChapterStatus.ready:
-        return Listener(
-          behavior: HitTestBehavior.opaque,
-          onPointerDown: _onPointerDown,
-          onPointerUp: _onPointerUp,
-          child: SelectionArea(
-            child: ListView(
-              controller: _scroll,
-              padding: EdgeInsets.fromLTRB(
-                _prefs.margin,
-                topInset + 20,
-                _prefs.margin,
-                bottomInset + 24,
-              ),
-              children: [
-                Text(
-                  _controller.chapterTitle.isEmpty
-                      ? _titleAt(_chapterIndex)
-                      : _controller.chapterTitle,
-                  style: _prefs.titleStyle,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '${_chapterIndex + 1} / ${_urls.length}',
-                  style: _prefs.captionStyle,
-                ),
-                const SizedBox(height: 20),
-                for (final p in _controller.paragraphs)
-                  Padding(
-                    padding: EdgeInsets.only(bottom: _prefs.fontSize * 0.72),
-                    child: _paragraph(p),
-                  ),
-                const SizedBox(height: 12),
-                Text(
-                  _chapterIndex + 1 < _urls.length
-                      ? '（本章完，点击屏幕右侧看下一章）'
-                      : '（全书完）',
-                  textAlign: TextAlign.center,
-                  style: _prefs.captionStyle,
-                ),
-              ],
-            ),
-          ),
-        );
-    }
+        ),
+      ),
+    );
   }
 
   Widget _buildTopBar(NovelThemePreset preset, double statusBarHeight) {
@@ -436,12 +607,6 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                       ),
                     ),
                   ),
-                  if (widget.roads.length > 1)
-                    IconButton(
-                      tooltip: '切换线路',
-                      onPressed: _pickRoad,
-                      icon: Icon(Icons.alt_route, color: preset.text),
-                    ),
                   IconButton(
                     tooltip: '目录',
                     onPressed: _urls.isEmpty ? null : _pickChapter,
@@ -457,6 +622,11 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   }
 
   Widget _buildBottomBar(NovelThemePreset preset, double bottomInset) {
+    final paged = _prefs.pagedMode;
+    final pageCount = _pages.isEmpty ? 1 : _pages.length;
+    final progressLabel = paged
+        ? '${_pageIndex + 1} / $pageCount 页 · 第 ${_chapterIndex + 1}/${_urls.length} 章'
+        : '第 ${_chapterIndex + 1}/${_urls.length} 章';
     return IgnorePointer(
       ignoring: !_barsVisible,
       child: AnimatedSlide(
@@ -474,37 +644,34 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
               child: Row(
                 children: [
                   IconButton(
-                    onPressed: _chapterIndex > 0
-                        ? () => _open(_chapterIndex - 1)
-                        : null,
-                    icon: Icon(
-                      Icons.chevron_left,
-                      color: _chapterIndex > 0
-                          ? preset.text
-                          : preset.secondary.withValues(alpha: 0.4),
-                    ),
-                    tooltip: '上一章',
+                    onPressed: _previous,
+                    icon: Icon(Icons.chevron_left, color: preset.text),
+                    tooltip: paged ? '上一页' : '上一章',
                   ),
                   Expanded(
-                    child: Text(
-                      _titleAt(_chapterIndex),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: _prefs.captionStyle,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _titleAt(_chapterIndex),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: _prefs.captionStyle,
+                        ),
+                        Text(
+                          progressLabel,
+                          maxLines: 1,
+                          textAlign: TextAlign.center,
+                          style: _prefs.captionStyle.copyWith(fontSize: 10),
+                        ),
+                      ],
                     ),
                   ),
                   IconButton(
-                    onPressed: _chapterIndex + 1 < _urls.length
-                        ? () => _open(_chapterIndex + 1)
-                        : null,
-                    icon: Icon(
-                      Icons.chevron_right,
-                      color: _chapterIndex + 1 < _urls.length
-                          ? preset.text
-                          : preset.secondary.withValues(alpha: 0.4),
-                    ),
-                    tooltip: '下一章',
+                    onPressed: _next,
+                    icon: Icon(Icons.chevron_right, color: preset.text),
+                    tooltip: paged ? '下一页' : '下一章',
                   ),
                   IconButton(
                     tooltip: '阅读设置',
@@ -521,10 +688,74 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   }
 }
 
-/// 阅读设置面板：字号、行距、边距、字体、背景、首行缩进。
+/// 一页的内容。
 ///
-/// 全部改动即时生效 —— 面板是半屏浮层，上半部分还露着正文，能直接看到效果。
-/// 不做「确定/取消」，因为这里的每一项都是可逆的、且没有副作用。
+/// 用 NeverScrollable 的 SingleChildScrollView 包一层，而不是裸 Column：
+/// 分页是按测量高度算的，但字体渲染有极小误差，万一算多了半像素，裸 Column
+/// 会抛 overflow。包起来之后最多是「最后一行被裁掉一点」，不影响阅读，
+/// 也不会在日志里刷一堆异常。
+class _PageView extends StatelessWidget {
+  const _PageView({
+    required this.page,
+    required this.prefs,
+    required this.referer,
+    required this.maxHeight,
+  });
+
+  final NovelPage page;
+  final NovelReaderPrefs prefs;
+  final String referer;
+  final double maxHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final block in page.blocks)
+              Padding(
+                padding: EdgeInsets.only(bottom: prefs.fontSize * 0.72),
+                child: _BlockView(
+                  block: block,
+                  prefs: prefs,
+                  referer: referer,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BlockView extends StatelessWidget {
+  const _BlockView({
+    required this.block,
+    required this.prefs,
+    required this.referer,
+  });
+
+  final NovelBlock block;
+  final NovelReaderPrefs prefs;
+  final String referer;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = block.imageUrl;
+    if (url == null) {
+      return Text(block.text, style: prefs.textStyle);
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: NovelCoverImage(url: url, referer: referer, fit: BoxFit.contain),
+    );
+  }
+}
+
+/// 阅读设置面板。
 class _ReaderSettingsSheet extends StatelessWidget {
   const _ReaderSettingsSheet({required this.prefs});
 
@@ -577,6 +808,38 @@ class _ReaderSettingsSheet extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 56,
+                        child: Text(
+                          '方式',
+                          style:
+                              TextStyle(fontSize: 14, color: preset.secondary),
+                        ),
+                      ),
+                      Expanded(
+                        child: SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(
+                              value: true,
+                              label: Text('翻页'),
+                              icon: Icon(Icons.auto_stories, size: 18),
+                            ),
+                            ButtonSegment(
+                              value: false,
+                              label: Text('滚动'),
+                              icon: Icon(Icons.swap_vert, size: 18),
+                            ),
+                          ],
+                          selected: {prefs.pagedMode},
+                          onSelectionChanged: (value) =>
+                              prefs.setPagedMode(value.first),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                   _StepperRow(
                     preset: preset,
                     label: '字号',
@@ -642,10 +905,13 @@ class _ReaderSettingsSheet extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     value: prefs.indent,
                     onChanged: prefs.setIndent,
-                    title: Text('首行缩进', style: prefs.captionStyle.copyWith(
-                      fontSize: 14,
-                      color: preset.text,
-                    )),
+                    title: Text(
+                      '首行缩进',
+                      style: prefs.captionStyle.copyWith(
+                        fontSize: 14,
+                        color: preset.text,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -785,7 +1051,6 @@ class _LabeledRow extends StatelessWidget {
   }
 }
 
-/// 背景色块。选中态用一圈描边而不是勾选图标 —— 勾选图标会盖住颜色本身。
 class _ThemeSwatch extends StatelessWidget {
   const _ThemeSwatch({
     required this.preset,
