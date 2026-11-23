@@ -622,6 +622,27 @@ class SettingsKeys {
     group: SettingGroup.novel,
   );
 
+  /// 朗读语速。0.5 是系统 TTS 的中速，中文听感接近正常说话。
+  static const novelTtsRate = SettingKey<double>(
+    'novelTtsRate',
+    0.5,
+    group: SettingGroup.novel,
+  );
+
+  /// 朗读音调。1.0 是系统默认。
+  static const novelTtsPitch = SettingKey<double>(
+    'novelTtsPitch',
+    1.0,
+    group: SettingGroup.novel,
+  );
+
+  /// 一章读完是否自动读下一章。
+  static const novelTtsAutoNext = SettingKey<bool>(
+    'novelTtsAutoNext',
+    true,
+    group: SettingGroup.novel,
+  );
+
   static final List<SettingKey<Object?>> all = [
     hAenable,
     hardwareDecoder,
@@ -736,6 +757,9 @@ class SettingsKeys {
     novelTheme,
     novelIndent,
     novelPageMode,
+    novelTtsRate,
+    novelTtsPitch,
+    novelTtsAutoNext,
   ];
 
   static List<SettingKey<Object?>> byGroup(SettingGroup group) {
