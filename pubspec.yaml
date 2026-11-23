@@ -25,8 +25,16 @@ dependencies:
   # 整站是 GBK —— 不转码拿到的是乱码，书名和正文全都读不出来。
   enough_convert: ^1.7.1
 
-  # 小说朗读：用系统 TTS，不打包模型（离线可用、无需 key）。
+  # 小说朗读。
+  #
+  # 两条通道：
+  #   • flutter_tts —— 系统 TTS，零成本、立即能用，作为兜底与快速试听
+  #   • sherpa_onnx —— 本地神经网络 TTS（VITS 中文），音质接近真人
+  #
+  # sherpa_onnx 的模型（约 31MB）不打包进 APK，第一次使用时下载到应用目录。
+  # 这样 APK 保持 32MB 左右，而需要好声音的人也就多花一次 31MB 流量。
   flutter_tts: ^4.2.5
+  sherpa_onnx: ^2.0.3
 
   path_provider: ^2.1.5
   hive_ce: ^2.16.0
