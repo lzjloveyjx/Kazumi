@@ -11,6 +11,7 @@ import 'package:kazumi/modules/collect/collect_change_module.dart';
 import 'package:kazumi/modules/collect/collect_sync_merger.dart';
 import 'package:kazumi/modules/search/search_history_module.dart';
 import 'package:kazumi/modules/download/download_module.dart';
+import 'package:kazumi/modules/novel/novel_shelf_module.dart';
 import 'package:kazumi/services/storage/history_storage_coordinator.dart';
 import 'package:kazumi/services/download/download_path_migration.dart';
 
@@ -27,6 +28,7 @@ class GStorage {
   static late final Box<dynamic> _setting;
   static late Box<SearchHistory> searchHistory;
   static late Box<DownloadRecord> downloads;
+  static late Box<NovelBookRecord> novelShelf;
 
   /// Hive directory path, initialized during init()
   static String? _hivePath;
@@ -159,6 +161,7 @@ class GStorage {
     shieldList = await _openBoxSafe<String>('shieldList');
     searchHistory = await _openBoxSafe<SearchHistory>('searchHistory');
     downloads = await _openBoxSafe<DownloadRecord>('downloads');
+    novelShelf = await _openBoxSafe<NovelBookRecord>('novelShelf');
     if (Platform.isIOS) {
       await rebaseIosDownloadPaths(downloads);
     }
