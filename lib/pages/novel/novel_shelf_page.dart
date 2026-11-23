@@ -167,42 +167,50 @@ class _NovelShelfPageState extends State<NovelShelfPage>
             icon: const Icon(Icons.delete_sweep_outlined),
           ),
         ],
-        bottom: TabBar(
-          controller: _tabs,
-          tabs: const [
-            Tab(text: '书架'),
-            Tab(text: '历史'),
-          ],
-        ),
       ),
-      body: _opening.isNotEmpty
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 12),
-                  Text('正在打开《$_opening》…'),
-                ],
-              ),
-            )
-          : TabBarView(
-              controller: _tabs,
-              children: [
-                _buildList(
-                  items: _shelf,
-                  emptyTitle: '书架还是空的。\n在书籍详情页点右上角的书签图标加进来。',
-                  emptyIcon: Icons.bookmark_border_rounded,
-                  showRemove: true,
-                ),
-                _buildList(
-                  items: _history,
-                  emptyTitle: '还没有阅读记录。\n随便打开一本书读一章就会出现。',
-                  emptyIcon: Icons.history_rounded,
-                  showRemove: false,
-                ),
-              ],
-            ),
+      // SysAppBar 不支持 bottom（它不是标准 AppBar 的包装，只转发固定字段），
+      // 所以 TabBar 放在 body 顶部，而不是塞进 appBar。
+      body: Column(
+        children: [
+          TabBar(
+            controller: _tabs,
+            tabs: const [
+              Tab(text: '书架'),
+              Tab(text: '历史'),
+            ],
+          ),
+          Expanded(
+            child: _opening.isNotEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 12),
+                        Text('正在打开《$_opening》…'),
+                      ],
+                    ),
+                  )
+                : TabBarView(
+                    controller: _tabs,
+                    children: [
+                      _buildList(
+                        items: _shelf,
+                        emptyTitle: '书架还是空的。\n在书籍详情页点右上角的书签图标加进来。',
+                        emptyIcon: Icons.bookmark_border_rounded,
+                        showRemove: true,
+                      ),
+                      _buildList(
+                        items: _history,
+                        emptyTitle: '还没有阅读记录。\n随便打开一本书读一章就会出现。',
+                        emptyIcon: Icons.history_rounded,
+                        showRemove: false,
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
