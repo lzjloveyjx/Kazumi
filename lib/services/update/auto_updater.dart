@@ -187,7 +187,14 @@ class AutoUpdater {
   }
 
   Future<Map<String, dynamic>> _latestRelease() async {
-    final raw = await _downloadClient.getPlain(ApiEndpoints.latestAppMirror);
+    late final String raw;
+    try {
+      raw = await _downloadClient.getPlain(ApiEndpoints.latestAppMirror);
+    } catch (_) {
+      // api.github.com 直连超时的话，挂 gh-proxy 再试一次。
+      raw = await _downloadClient
+          .getPlain(viaGithubProxy(ApiEndpoints.latestAppMirror));
+    }
     final data = json.decode(raw);
     if (data is! Map) {
       throw Exception('Invalid update response');

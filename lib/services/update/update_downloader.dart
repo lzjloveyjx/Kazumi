@@ -7,12 +7,32 @@ import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/update/update_download_source.dart';
 import 'package:kazumi/utils/crypto.dart';
 
+/// GitHub 直链在国内大多连不上，统一走 gh-proxy 镜像。
+const String _githubProxyPrefix = 'https://gh-proxy.org/';
+
+/// 把 github.com / api.github.com 的直链改写成 gh-proxy 镜像地址。
+/// 已经是镜像地址、或非 GitHub 域名的，原样返回。
+String viaGithubProxy(String url) {
+  final u = url.trim();
+  if (u.isEmpty || u.startsWith(_githubProxyPrefix)) return u;
+  if (u.startsWith('https://github.com/') ||
+      u.startsWith('https://api.github.com/')) {
+    return '$_githubProxyPrefix$u';
+  }
+  return u;
+}
+
 String getUpdateDownloadUrlFromAsset(
     Map<String, dynamic>? asset, UpdateDownloadSource source) {
-  final url = asset?[switch (source) {
-    UpdateDownloadSource.mirror => 'mirror_download_url',
-    UpdateDownloadSource.github => 'browser_download_url',
-  }];
+  if (source == UpdateDownloadSource.mirror) {
+    // 上游后端会给 mirror_download_url；我们的 release 没这字段，
+    // 就退回把 GitHub 直链挂 gh-proxy —— 默认「镜像」源才真能下载。
+    final mirror = asset?['mirror_download_url'];
+    if (mirror is String && mirror.trim().isNotEmpty) return mirror.trim();
+    final github = asset?['browser_download_url'];
+    return github is String ? viaGithubProxy(github) : '';
+  }
+  final url = asset?['browser_download_url'];
   return url is String ? url.trim() : '';
 }
 
