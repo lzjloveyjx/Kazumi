@@ -168,6 +168,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   String _fontFamilyId = 'system';
   String _themeId = 'paper';
   bool _indent = true;
+  String _pageMode = 'paged';
 
   double get fontSize {
     _ensureLoaded();
@@ -187,6 +188,12 @@ class NovelReaderPrefs extends ChangeNotifier {
   bool get indent {
     _ensureLoaded();
     return _indent;
+  }
+
+  /// true = 翻页阅读，false = 上下滚动。
+  bool get pagedMode {
+    _ensureLoaded();
+    return _pageMode == 'paged';
   }
   NovelFontFamilyOption get fontFamily {
     _ensureLoaded();
@@ -282,6 +289,15 @@ class NovelReaderPrefs extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setPagedMode(bool value) {
+    _ensureLoaded();
+    final next = value ? 'paged' : 'scroll';
+    if (next == _pageMode) return;
+    _pageMode = next;
+    GStorage.putSetting(SettingsKeys.novelPageMode, next);
+    notifyListeners();
+  }
+
   /// 恢复默认外观（不含阅读进度）。
   void resetAppearance() {
     _loaded = true;
@@ -291,12 +307,14 @@ class NovelReaderPrefs extends ChangeNotifier {
     _fontFamilyId = 'system';
     _themeId = 'paper';
     _indent = true;
+    _pageMode = 'paged';
     GStorage.putSetting(SettingsKeys.novelFontSize, _fontSize);
     GStorage.putSetting(SettingsKeys.novelLineHeight, _lineHeight);
     GStorage.putSetting(SettingsKeys.novelMargin, _margin);
     GStorage.putSetting(SettingsKeys.novelFontFamily, _fontFamilyId);
     GStorage.putSetting(SettingsKeys.novelTheme, _themeId);
     GStorage.putSetting(SettingsKeys.novelIndent, _indent);
+    GStorage.putSetting(SettingsKeys.novelPageMode, _pageMode);
     notifyListeners();
   }
 }
