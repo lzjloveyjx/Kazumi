@@ -85,7 +85,7 @@ void main() async {
           ? TitleBarStyle.hidden
           : TitleBarStyle.normal,
       windowButtonVisibility: showWindowButton,
-      title: 'Kazumi',
+      title: '青枢',
     );
     // Hidden title bar resizes twice here; a frame rasterized in between can
     // pin the Windows swap chain to a stale size, stretching every later frame.
