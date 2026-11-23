@@ -1510,9 +1510,9 @@ class _ReaderSettingsSheet extends StatelessWidget {
                       },
                       icon: const Icon(Icons.settings_voice, size: 18),
                       label: Text(
-                        _prefs.ttsEnginePackage.isEmpty
+                        prefs.ttsEnginePackage.isEmpty
                             ? '系统默认'
-                            : _prefs.ttsEnginePackage,
+                            : prefs.ttsEnginePackage,
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
