@@ -61,6 +61,32 @@ class _NovelSettingsPageState extends State<NovelSettingsPage> {
                 bottomInfo: const Text('预览用的是当前的字号、行距、字体与背景'),
               ),
               SettingsSection(
+                title: const Text('阅读方式'),
+                tiles: [
+                  SettingsRadioSection<bool>(
+                    groupValue: _prefs.pagedMode,
+                    onChanged: (value) {
+                      if (value != null) _prefs.setPagedMode(value);
+                    },
+                    tiles: const [
+                      SettingsTile<bool>.radioTile(
+                        leading: Icons.auto_stories,
+                        title: Text('翻页'),
+                        description: Text('左右滑动翻页，进度精确到第几页'),
+                        radioValue: true,
+                      ),
+                      SettingsTile<bool>.radioTile(
+                        leading: Icons.swap_vert,
+                        title: Text('滚动'),
+                        description: Text('整章上下滑动，进度只到第几章'),
+                        radioValue: false,
+                      ),
+                    ],
+                  ),
+                ],
+                bottomInfo: const Text('翻页模式下会记住你读到第几页，换字号也不会丢'),
+              ),
+              SettingsSection(
                 title: const Text('文字'),
                 tiles: [
                   SettingsSliderTile(
