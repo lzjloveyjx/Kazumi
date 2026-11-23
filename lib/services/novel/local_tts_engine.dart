@@ -47,16 +47,14 @@ class LocalTtsEngine {
   /// 模型是否已下载。
   Future<bool> modelReady() => _manager.isReady();
 
-  /// 下载模型（首次使用）。[onProgress] 是 0~1；
-  /// [onMirror] 在切换镜像时回调（用于解释「为什么等了一会儿」）。
+  /// 把随包模型释放到磁盘（首次使用）。[onProgress] 是 0~1。
+  ///
+  /// 不联网：模型在 assets 里，这里只是拷到应用私有目录，因为
+  /// sherpa-onnx 的 C 接口要文件路径，读不了 Flutter asset 的字节流。
   Future<void> downloadModel({
     void Function(double progress)? onProgress,
-    void Function(String mirror)? onMirror,
   }) {
-    return _manager.ensureReady(
-      onProgress: onProgress,
-      onMirror: onMirror,
-    );
+    return _manager.ensureReady(onProgress: onProgress);
   }
 
   /// 初始化引擎。已就绪时立即返回。

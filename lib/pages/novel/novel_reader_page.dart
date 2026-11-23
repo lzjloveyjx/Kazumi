@@ -389,11 +389,11 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('下载语音模型？'),
+        title: const Text('启用神经网络朗读？'),
         content: const Text(
-          '本地神经网络朗读需要先下载一个约 31MB 的中文语音模型。\n\n'
-          '下载后完全离线可用，音质接近有声书。\n'
-          '不下载的话会用系统朗读，能听但声音机械。',
+          '语音模型已经打包在应用里（约 31MB），首次使用需要解压到本地，'
+          '大约几秒钟，不需要联网。\n\n'
+          '启用后音质接近有声书；也可以继续用系统朗读（能听但机械）。',
         ),
         actions: [
           TextButton(
@@ -402,7 +402,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('下载'),
+            child: const Text('启用'),
           ),
         ],
       ),
@@ -414,8 +414,8 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
       const SnackBar(
-        content: Text('正在下载语音模型…'),
-        duration: Duration(minutes: 10),
+        content: Text('正在解压语音模型…'),
+        duration: Duration(minutes: 2),
       ),
     );
     try {
@@ -426,8 +426,8 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
           if (pct % 10 == 0 && mounted) {
             messenger.showSnackBar(
               SnackBar(
-                content: Text('正在下载语音模型… $pct%'),
-                duration: const Duration(minutes: 10),
+                content: Text('正在解压语音模型… $pct%'),
+                duration: const Duration(minutes: 2),
               ),
             );
           }
@@ -440,14 +440,14 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
         return true;
       }
       messenger.showSnackBar(
-        const SnackBar(content: Text('模型下载好了但加载失败，先用系统朗读')),
+        const SnackBar(content: Text('模型已解压但加载失败，先用系统朗读')),
       );
       await _tts.play(fromSentence: _ttsSentenceIndex);
       return true;
     } catch (e) {
       messenger.hideCurrentSnackBar();
       messenger.showSnackBar(
-        SnackBar(content: Text('下载失败：$e')),
+        SnackBar(content: Text('解压失败：$e')),
       );
       await _tts.play(fromSentence: _ttsSentenceIndex);
       return true;
