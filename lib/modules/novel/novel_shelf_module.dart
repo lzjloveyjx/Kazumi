@@ -62,6 +62,21 @@ class NovelBookRecord {
   @HiveField(12)
   int addedAtMs;
 
+  /// 上次读到那一章的第几页（从 0 开始）。
+  ///
+  /// 只在分页模式下有意义。注意这个值**不稳定**：字号、行距、页边距任何一项
+  /// 变了，一章的页数就全变了，第 5 页可能变成第 4 页。所以恢复位置不能只靠
+  /// 它，还要配合 [lastPageAnchor]。
+  @HiveField(13, defaultValue: 0)
+  int lastPageIndex;
+
+  /// 上次那一页的第一个段落在整章里的下标。
+  ///
+  /// 这是**稳定锚点**：不管怎么排版，第 37 段永远是第 37 段。恢复时用它
+  /// 反查「现在第几页包含第 37 段」，字号变了也能落回差不多的地方。
+  @HiveField(14, defaultValue: 0)
+  int lastPageAnchor;
+
   NovelBookRecord({
     required this.pluginName,
     required this.bookKey,
@@ -76,6 +91,8 @@ class NovelBookRecord {
     this.chapterCount = 0,
     this.onShelf = false,
     this.addedAtMs = 0,
+    this.lastPageIndex = 0,
+    this.lastPageAnchor = 0,
   });
 
   /// 书架/历史表的键。同名规则 + 同一本书 = 同一条记录。
