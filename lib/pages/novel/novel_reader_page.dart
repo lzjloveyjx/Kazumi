@@ -387,91 +387,15 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       voice: _prefs.ttsEngineVoice,
     );
 
-    // 优先用本地神经网络；模型没下就先问用户。
-    final neural = await _tts.tryUseNeural();
-    if (!neural && mounted) {
-      final download = await _askDownloadModel();
-      if (download == true) {
-        final ok = await _downloadModelThenPlay();
-        if (ok) return;
-      }
-    }
+    // 直接走系统朗读（MultiTTS 等第三方引擎）。
+    // 不再询问解压内置神经模型——用户走系统通道，用不到它。
+    _tts.useSystem();
     await _tts.play();
   }
 
   /// 语速倍率。prefs 里存的是系统 TTS 的 rate（0.2~1.0），
   /// 神经网络通道要的是倍率（0.3~3.0），这里做一次映射。
   double get _ttsSpeed => (0.5 + _prefs.ttsRate * 1.5).clamp(0.5, 2.5);
-
-  /// 问用户要不要下载模型。
-  Future<bool?> _askDownloadModel() async {
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('启用神经网络朗读？'),
-        content: const Text(
-          '语音模型已经打包在应用里（约 31MB），首次使用需要解压到本地，'
-          '大约几秒钟，不需要联网。\n\n'
-          '启用后音质接近有声书；也可以继续用系统朗读（能听但机械）。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('用系统朗读'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('启用'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<bool> _downloadModelThenPlay() async {
-    // 用 SnackBar 显示进度：模型下载是一两分钟的活，不该只有个转圈。
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      const SnackBar(
-        content: Text('正在解压语音模型…'),
-        duration: Duration(minutes: 2),
-      ),
-    );
-    try {
-      await _tts.engine.downloadModel(
-        onProgress: (p) {
-          // 进度百分比挂在 SnackBar 上会刷屏，这里只在整十的时候更新。
-          final pct = (p * 100).round();
-          if (pct % 10 == 0 && mounted) {
-            messenger.showSnackBar(
-              SnackBar(
-                content: Text('正在解压语音模型… $pct%'),
-                duration: const Duration(minutes: 2),
-              ),
-            );
-          }
-        },
-      );
-      messenger.hideCurrentSnackBar();
-      final ok = await _tts.tryUseNeural();
-      if (ok) {
-        await _tts.play(fromSentence: _ttsSentenceIndex);
-        return true;
-      }
-      messenger.showSnackBar(
-        const SnackBar(content: Text('模型已解压但加载失败，先用系统朗读')),
-      );
-      await _tts.play(fromSentence: _ttsSentenceIndex);
-      return true;
-    } catch (e) {
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(content: Text('解压失败：$e')),
-      );
-      await _tts.play(fromSentence: _ttsSentenceIndex);
-      return true;
-    }
-  }
 
   void _onTtsNotice(String message) {
     if (!mounted) return;
