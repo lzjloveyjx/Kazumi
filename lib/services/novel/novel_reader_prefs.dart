@@ -169,7 +169,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   String _themeId = 'paper';
   bool _indent = true;
   String _pageMode = 'paged';
-  String _pageAnimation = 'slide';
+  String _pageAnimation = 'curl';
   String _ttsVoiceId = 'xiao_ya';
   String _ttsEnginePackage = '';
   String _ttsEngineVoice = '';

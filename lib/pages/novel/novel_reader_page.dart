@@ -6,6 +6,7 @@ import 'package:flutter_modular/flutter_modular.dart';
 
 import 'package:kazumi/bean/widget/empty_state_widget.dart';
 import 'package:kazumi/bean/widget/novel_cover_image.dart';
+import 'package:kazumi/bean/widget/novel_page_curl.dart';
 import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/pages/novel/listening_sheet.dart';
 import 'package:kazumi/pages/novel/novel_reader_controller.dart';
@@ -90,6 +91,19 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   /// 打开新章后，第一次分页完成时要把位置恢复到上次读的地方。
   bool _pendingRestore = false;
+
+  /// 卷页动画状态（null = 没有正在进行的拖动）。
+  ({bool forward, double progress})? _curl;
+
+  /// 拖拽起点 / 上一个点的 x，用来算进度和「往回退」。
+  double _dragStartX = 0;
+  double _dragLastX = 0;
+
+  /// 是否已锁定方向（超过 8px 才算开始翻页，避免误触）。
+  bool _dragLocked = false;
+
+  /// 松手时是否取消翻页（拖出去又拖回来）。
+  bool _dragCancelled = false;
 
   /// 朗读控制器。
   late final NovelTtsPlayer _tts;
@@ -990,41 +1004,138 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   /// 翻页模式的正文。
   ///
-  /// 只用 PageView 的横向滑动翻页。
+  /// 卷页的正确做法（照 novel-sound 的 reader_paged_view 学）：
   ///
-  /// 为什么把「卷页」删了：它要求在 PageView 上面再叠一层拖拽手势，而
-  /// PageView 自己的 Scrollable 会先在手势竞技场里赢下水平拖动，外层
-  /// GestureDetector 的 onHorizontalDragUpdate 根本不触发 —— 手指拖不动、
-  /// 页面也不走，实测就是「卡死」。把动画改成 IgnorePointer 覆盖层只是让
-  /// 手指能滑动，卷页动画本身仍然不会跟手，属于半残。与其留一个坏掉的效果，
-  /// 不如只保留可靠的那种。
+  /// 手势必须挂在 **PageView 的 item 内容上**，而不是包在 PageView 外面。
+  /// 之前失败就是因为挂在外层：PageView 内部的 Scrollable 在手势竞技场里
+  /// 先赢下水平拖动，外层的 onHorizontalDragUpdate 永远不触发 —— 手指拖不
+  /// 动、页面也不翻。
   ///
-  /// [NovelReaderPrefs.pageAnimation] 仍保留，但只有 'slide' / 'none' 两种
-  /// 有效值：'slide' 是 PageView 默认的滑动，'none' 关掉过渡动画。
+  /// 现在的组合：
+  ///   • PageView.physics = NeverScrollableScrollPhysics —— 让 PageView 放弃
+  ///     水平手势，竞技场里没有竞争者，item 上的 GestureDetector 才能拿到。
+  ///   • 每个 item 内容用 _wrapCurl 包一层水平拖拽识别，跟手写进度。
+  ///   • 卷页动画作为 IgnorePointer 覆盖层画在最上面，只负责视觉。
+  ///   • 翻页本身用 _pageController.jumpToPage —— 不靠 PageView 的滑动，
+  ///     否则会和 NeverScrollable 打架。
   Widget _buildPaged(NovelThemePreset preset, double width, double height) {
     if (_pages.isEmpty) {
       return const Center(child: SizedBox.shrink());
     }
     _pageController ??= PageController(initialPage: _pageIndex);
 
-    return Listener(
+    final curl = _curl;
+    final curling = curl != null && _prefs.pageAnimation == 'curl';
+
+    final pager = Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: _onPointerDown,
       onPointerUp: _onPointerUp,
       child: PageView.builder(
         controller: _pageController,
-        // 'none' 时用 ClampingScrollPhysics 并把过渡压到 0，翻页瞬时完成；
-        // 其余情况走默认滑动。不用 NeverScrollable —— 那会让页面完全翻不动。
-        physics: _prefs.pageAnimation == 'none'
-            ? const PageScrollPhysics()
+        // 卷页模式下 PageView 不接管水平手势，让 item 上的拖拽识别器赢。
+        physics: _prefs.pageAnimation == 'curl'
+            ? const NeverScrollableScrollPhysics()
             : null,
         itemCount: _pages.length,
         onPageChanged: (index) {
           setState(() => _pageIndex = index);
           _recordProgress();
         },
-        itemBuilder: (context, index) => _pageContent(index, height),
+        itemBuilder: (context, index) {
+          final content = _pageContent(index, height);
+          if (_prefs.pageAnimation != 'curl') return content;
+          // 手势挂在 item 内容上 —— 这是能跟手的关键。
+          return GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragStart: (d) {
+              _dragStartX = d.globalPosition.dx;
+              _dragLastX = d.globalPosition.dx;
+              _dragLocked = false;
+              _dragCancelled = false;
+            },
+            onHorizontalDragUpdate: (d) {
+              final dx = d.globalPosition.dx;
+              final prev = _dragLastX;
+              _dragLastX = dx;
+              final delta = dx - _dragStartX;
+
+              if (!_dragLocked) {
+                if (delta.abs() < 8) return;
+                final forward = delta < 0;
+                final canTurn = forward
+                    ? (_pageIndex + 1 < _pages.length)
+                    : (_pageIndex > 0);
+                if (!canTurn) return; // 章节边界交给点击热区
+                _dragLocked = true;
+                setState(() => _curl = (forward: forward, progress: 0));
+              }
+
+              final active = _curl;
+              if (active == null) return;
+
+              // 判定「往回退」：翻到一半又拖回来就取消，和 Legado 的 isCancel 一致。
+              final retreated = active.forward ? dx > prev + 2 : dx < prev - 2;
+              final advanced = active.forward ? dx < prev - 2 : dx > prev + 2;
+              if (retreated) _dragCancelled = true;
+              if (advanced) _dragCancelled = false;
+
+              final progress = (delta.abs() / width).clamp(0.0, 1.0);
+              setState(() =>
+                  _curl = (forward: active.forward, progress: progress));
+            },
+            onHorizontalDragEnd: (d) {
+              final active = _curl;
+              if (active == null || !_dragLocked) {
+                setState(() => _curl = null);
+                return;
+              }
+              final complete = !_dragCancelled;
+              final forward = active.forward;
+              setState(() => _curl = null);
+              if (complete) {
+                // 直接跳页：PageView 已设 NeverScrollable，不能用 animateToPage。
+                final target = forward ? _pageIndex + 1 : _pageIndex - 1;
+                if (target >= 0 && target < _pages.length) {
+                  setState(() => _pageIndex = target);
+                  _pageController?.jumpToPage(target);
+                  _recordProgress();
+                }
+              }
+            },
+            onHorizontalDragCancel: () {
+              _dragLocked = false;
+              setState(() => _curl = null);
+            },
+            child: content,
+          );
+        },
       ),
+    );
+
+    if (!curling) return pager;
+
+    // 只读覆盖层：IgnorePointer 保证它不吃掉任何手势。
+    final forward = curl.forward;
+    final outgoingIndex = _pageIndex;
+    final incomingIndex = forward
+        ? (_pageIndex + 1).clamp(0, _pages.length - 1)
+        : (_pageIndex - 1).clamp(0, _pages.length - 1);
+    return Stack(
+      children: [
+        pager,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: NovelPageCurl(
+              progress: curl.progress,
+              forward: forward,
+              backgroundColor: preset.background,
+              outgoing: _pageContent(outgoingIndex, height),
+              incoming: _pageContent(incomingIndex, height),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1490,6 +1601,7 @@ class _ReaderSettingsSheet extends StatelessWidget {
                       spacing: 8,
                       children: [
                         for (final option in const [
+                          ('curl', '卷页'),
                           ('slide', '平移'),
                           ('none', '无动画'),
                         ])
