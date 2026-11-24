@@ -374,7 +374,9 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       await _tts.pause();
       return;
     }
-    if (_ttsState == TtsPlaybackState.paused) {
+    // 暂停后内部状态可能被 TTS 的 cancel 回调刷成 idle，所以不能只看
+    // _ttsState == paused；isPaused 才是「可以接着读」的可靠依据。
+    if (_ttsState == TtsPlaybackState.paused || _tts.isPaused) {
       await _tts.resume();
       return;
     }

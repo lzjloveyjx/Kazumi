@@ -68,6 +68,14 @@ class NovelTtsPlayer {
 
   TtsEngineKind get engineKind => _kind;
   bool get isActive => _state != TtsPlaybackState.idle;
+
+  /// 是否处于「可恢复的暂停」。
+  ///
+  /// 系统通道交给 NovelTtsController 判断（它知道 TTS 的 cancel 回调有没有
+  /// 把状态刷成 idle）；神经网络通道用自己的播放器，暂停就是真暂停。
+  bool get isPaused => _kind == TtsEngineKind.neural
+      ? _state == TtsPlaybackState.paused
+      : _system.isPaused;
   LocalTtsEngine get engine => _engine;
 
   /// 系统 TTS 控制器。切引擎/选音色要走它。

@@ -54,6 +54,17 @@ class NovelTtsController {
   bool _initialized = false;
   bool _disposed = false;
 
+  /// 是否处于「用户主动暂停、可以恢复」的状态。
+  ///
+  /// 不能用 _state == paused 判断：pause() 里的 _tts.stop() 会异步触发
+  /// cancel 回调，把状态刷成 idle，于是 resume() 一看不是 paused 就直接
+  /// return —— 通知栏暂停后再点播放毫无反应，通话结束也不会自动续读。
+  /// 这个标记才是「可以恢复」的唯一依据。
+  bool _paused = false;
+
+  /// 正在执行「自己发起的 stop」，此时 cancel 回调不该把状态改成 idle。
+  bool _pausing = false;
+
   /// 每读完一句要通知外面两件事：现在读的是第几句、进度如何。
   void Function(int index)? onSentenceChanged;
   void Function(TtsPlaybackState state)? onStateChanged;
@@ -179,6 +190,9 @@ class NovelTtsController {
     });
     _tts.setCancelHandler(() {
       if (_disposed) return;
+      // 自己调 stop() 暂停时会走到这里。此时状态必须留在 paused，
+      // 否则通知栏的「播放」和来电后的自动恢复都会失效。
+      if (_pausing) return;
       _emitState(TtsPlaybackState.idle);
     });
     _tts.setErrorHandler((message) {
@@ -344,25 +358,46 @@ class NovelTtsController {
       _index = fromSentence.clamp(0, _sentences.length - 1);
       _emitSentence();
     }
+    _paused = false;
     await _speakCurrent();
   }
 
   void pause() {
+    if (_sentences.isEmpty) return;
+    if (_state == TtsPlaybackState.idle) return;
+    _paused = true;
+    _pausing = true;
     _tts.stop();
     _emitState(TtsPlaybackState.paused);
+    // cancel 回调是异步的，给它一个窗口期；过了就重新放开闸门。
+    Future<void>.delayed(const Duration(milliseconds: 400), () {
+      _pausing = false;
+    });
   }
 
+  /// 从暂停处继续朗读。
+  ///
+  /// 只要还有句子且不是正在读，就恢复 —— 不再死守 _state == paused。
+  /// 通知栏按钮、耳机线控、来电结束后都走这条路。
   Future<void> resume() async {
-    if (_state != TtsPlaybackState.paused) return;
+    if (_sentences.isEmpty) return;
+    if (_state == TtsPlaybackState.speaking) return;
+    // 没暂停过（比如已经读到章末自然结束）就不该凭空开读。
+    if (!_paused && _state == TtsPlaybackState.idle) return;
+    _paused = false;
     await _speakCurrent();
   }
 
   Future<void> stop() async {
+    _paused = false;
     _tts.stop();
     _index = 0;
     _emitState(TtsPlaybackState.idle);
     _emitSentence();
   }
+
+  /// 是否处于暂停态（供 UI / 通知栏判断该显示播放还是暂停）。
+  bool get isPaused => _paused;
 
   /// 跳到相邻的一句（负数是往前）。
   Future<void> skip(int delta) async {
