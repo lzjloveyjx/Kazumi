@@ -6,8 +6,8 @@ import 'package:flutter_modular/flutter_modular.dart';
 
 import 'package:kazumi/bean/widget/empty_state_widget.dart';
 import 'package:kazumi/bean/widget/novel_cover_image.dart';
-import 'package:kazumi/bean/widget/novel_page_curl.dart';
 import 'package:kazumi/modules/roads/road_module.dart';
+import 'package:kazumi/pages/novel/listening_sheet.dart';
 import 'package:kazumi/pages/novel/novel_reader_controller.dart';
 import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/repositories/novel_shelf_repository.dart';
@@ -102,16 +102,6 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   /// 当前朗读到第几句。
   int _ttsSentenceIndex = 0;
-
-  /// 卷页动画状态。
-  ///
-  /// null 表示没有正在进行的拖动。否则是 (起拖方向, 0~1 进度)。
-  /// 用 drag 而不是点按触发：卷页的手感来自「手指拖着纸角走」，
-  /// 点击触发只能做成定时动画，没有跟手的感觉。
-  ({bool forward, double progress})? _curl;
-
-  /// 拖动的起点 x，用来判断方向。
-  double _dragStartX = 0;
 
   /// 点按判定用的按下状态。见 [_onPointerUp] 的注释。
   Offset? _downPosition;
@@ -389,6 +379,93 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       return;
     }
     await _startTts();
+  }
+
+  /// 打开听书控制面板（底部弹层）。
+  ///
+  /// 面板里点按钮会直接改朗读状态，但弹层本身是独立 route，不会跟着阅读页
+  /// 的 setState 重建 —— 所以用 StatefulBuilder 包一层，把面板需要的状态
+  /// 在每次操作后同步进去。
+  Future<void> _openListeningSheet() async {
+    if (_controller.status != NovelChapterStatus.ready) return;
+    // 没在朗读时先起读，否则面板里全是禁用按钮，看着像坏了。
+    if (_ttsState == TtsPlaybackState.idle) {
+      await _startTts();
+      if (!mounted) return;
+    }
+    if (!mounted) return;
+
+    final preset = _prefs.theme;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx2, setSheetState) {
+            void refresh() {
+              if (mounted) setSheetState(() {});
+            }
+
+            return ListeningSheet(
+              state: _ttsState,
+              sentenceIndex: _ttsSentenceIndex,
+              sentenceCount: _tts.sentences.length,
+              sentenceText: _ttsSentenceText,
+              chapterTitle: _titleAt(_chapterIndex),
+              speed: _ttsSpeed,
+              accent: Theme.of(context).colorScheme.primary,
+              textColor: preset.text,
+              secondaryColor: preset.secondary,
+              background: preset.background,
+              onToggle: () async {
+                await _toggleTts();
+                refresh();
+              },
+              onPrevious: () async {
+                await _tts.skip(-1);
+                refresh();
+              },
+              onNext: () async {
+                await _tts.skip(1);
+                refresh();
+              },
+              onSeekSentence: (index) async {
+                await _tts.skip(index - _ttsSentenceIndex);
+                refresh();
+              },
+              onSpeedChanged: (speed) async {
+                _prefs.setTtsRate(_rateFromSpeed(speed));
+                _tts.setSpeed(speed);
+                await _tts.system.setRate(speed);
+                setState(() {});
+                refresh();
+              },
+              onClose: () => Navigator.of(ctx2).maybePop(),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// 面板倍速 → prefs 里存的 rate。
+  ///
+  /// prefs 的 ttsRate 是 0.2~1.0 的老语义（历史遗留），而 _ttsSpeed 把它
+  /// 映射成 0.5~2.5 的倍率。这里做反向映射，保证面板选 1.3x 之后重新进
+  /// 阅读页仍然是 1.3x。
+  double _rateFromSpeed(double speed) {
+    final rate = (speed - 0.5) / 1.5;
+    return rate.clamp(0.2, 1.0);
+  }
+
+  /// 当前正在读的那句文本（面板里显示，让用户确认读到哪）。
+  String get _ttsSentenceText {
+    final sentences = _tts.sentences;
+    if (_ttsSentenceIndex < 0 || _ttsSentenceIndex >= sentences.length) {
+      return '';
+    }
+    return sentences[_ttsSentenceIndex].text;
   }
 
   Future<void> _startTts() async {
@@ -911,110 +988,41 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   /// 翻页模式的正文。
   ///
-  /// 用「手势拖拽 + 卷页动画」而不是 PageView 的滑动：
-  /// PageView 的过渡是整页平移，看着像幻灯片；卷页是把纸角拖起来翻过去，
-  /// 手感接近实体书。两者都支持，由 [NovelReaderPrefs] 里的
-  /// pageAnimation 决定（卷页 / 平移 / 无动画）。
+  /// 只用 PageView 的横向滑动翻页。
+  ///
+  /// 为什么把「卷页」删了：它要求在 PageView 上面再叠一层拖拽手势，而
+  /// PageView 自己的 Scrollable 会先在手势竞技场里赢下水平拖动，外层
+  /// GestureDetector 的 onHorizontalDragUpdate 根本不触发 —— 手指拖不动、
+  /// 页面也不走，实测就是「卡死」。把动画改成 IgnorePointer 覆盖层只是让
+  /// 手指能滑动，卷页动画本身仍然不会跟手，属于半残。与其留一个坏掉的效果，
+  /// 不如只保留可靠的那种。
+  ///
+  /// [NovelReaderPrefs.pageAnimation] 仍保留，但只有 'slide' / 'none' 两种
+  /// 有效值：'slide' 是 PageView 默认的滑动，'none' 关掉过渡动画。
   Widget _buildPaged(NovelThemePreset preset, double width, double height) {
     if (_pages.isEmpty) {
       return const Center(child: SizedBox.shrink());
     }
     _pageController ??= PageController(initialPage: _pageIndex);
 
-    // 卷页动画必须「叠在」承载手势的 PageView 上面，不能替换掉它：
-    // 之前 _curl != null 时直接 return NovelPageCurl，GestureDetector 连同
-    // 它的 HorizontalDragRecognizer 一起被移出 widget 树，drag 回调再也不
-    // 触发，手指就跟丢了 —— 表现就是「卷页效果下根本翻不了页」。
-    // 现在手势层始终在场，动画只是最上面一层只读的视觉覆盖。
-    final curl = _curl;
-    final bool curling = curl != null && _prefs.pageAnimation == 'curl';
-
-    Widget gestureLayer = GestureDetector(
-      // 水平拖动驱动卷页；短距离拖动仍然交给点击热区处理。
-      onHorizontalDragStart: _prefs.pageAnimation == 'curl'
-          ? (details) {
-              _dragStartX = details.localPosition.dx;
-            }
-          : null,
-      onHorizontalDragUpdate: _prefs.pageAnimation == 'curl'
-          ? (details) {
-              final dx = details.localPosition.dx - _dragStartX;
-              final forward = dx < 0;
-              final canTurn = forward
-                  ? (_pageIndex + 1 < _pages.length ||
-                      _chapterIndex + 1 < _urls.length)
-                  : (_pageIndex > 0 || _chapterIndex > 0);
-              if (!canTurn) {
-                if (_curl != null) setState(() => _curl = null);
-                return;
-              }
-              final progress = (dx.abs() / width).clamp(0.0, 1.0);
-              setState(() => _curl = (forward: forward, progress: progress));
-            }
-          : null,
-      onHorizontalDragEnd: _prefs.pageAnimation == 'curl'
-          ? (details) {
-              final activeCurl = _curl;
-              if (activeCurl == null) return;
-              final velocity = details.velocity.pixelsPerSecond.dx;
-              final flung =
-                  activeCurl.forward ? velocity < -300 : velocity > 300;
-              final committed = activeCurl.progress > 0.3 || flung;
-              setState(() => _curl = null);
-              // 先把底层 PageView 翻过去，再让覆盖层消失，避免动画结束瞬间
-              // 露出还没翻的旧页、看起来像「弹回去」。
-              if (committed) {
-                if (activeCurl.forward) {
-                  _next();
-                } else {
-                  _previous();
-                }
-              }
-            }
-          : null,
-      child: Listener(
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: _onPointerDown,
-        onPointerUp: _onPointerUp,
-        child: PageView.builder(
-          controller: _pageController,
-          physics: _prefs.pageAnimation == 'curl'
-              ? const NeverScrollableScrollPhysics()
-              : null,
-          itemCount: _pages.length,
-          onPageChanged: (index) {
-            setState(() => _pageIndex = index);
-            _recordProgress();
-          },
-          itemBuilder: (context, index) => _pageContent(index, height),
-        ),
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: _onPointerDown,
+      onPointerUp: _onPointerUp,
+      child: PageView.builder(
+        controller: _pageController,
+        // 'none' 时用 ClampingScrollPhysics 并把过渡压到 0，翻页瞬时完成；
+        // 其余情况走默认滑动。不用 NeverScrollable —— 那会让页面完全翻不动。
+        physics: _prefs.pageAnimation == 'none'
+            ? const PageScrollPhysics()
+            : null,
+        itemCount: _pages.length,
+        onPageChanged: (index) {
+          setState(() => _pageIndex = index);
+          _recordProgress();
+        },
+        itemBuilder: (context, index) => _pageContent(index, height),
       ),
-    );
-
-    if (!curling) return gestureLayer;
-
-    // 只读覆盖层：IgnorePointer 保证它不吃掉任何手势。
-    final forward = curl.forward;
-    final outgoingIndex = _pageIndex;
-    final incomingIndex = forward
-        ? (_pageIndex + 1).clamp(0, _pages.length - 1)
-        : (_pageIndex - 1).clamp(0, _pages.length - 1);
-    return Stack(
-      children: [
-        gestureLayer,
-        Positioned.fill(
-          child: IgnorePointer(
-            ignoring: true,
-            child: NovelPageCurl(
-              progress: curl.progress,
-              forward: forward,
-              backgroundColor: preset.background,
-              outgoing: _pageContent(outgoingIndex, height),
-              incoming: _pageContent(incomingIndex, height),
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -1206,22 +1214,28 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                     icon: Icon(Icons.chevron_right, color: preset.text),
                     tooltip: paged ? '下一页' : '下一章',
                   ),
-                  IconButton(
-                    tooltip: _ttsState == TtsPlaybackState.speaking
-                        ? '暂停朗读'
-                        : (_ttsState == TtsPlaybackState.paused
-                            ? '继续朗读'
-                            : '朗读'),
-                    onPressed: _controller.status == NovelChapterStatus.ready
-                        ? _toggleTts
+                  // 短按：播放/暂停。长按：打开听书面板（进度、倍速、跳句）。
+                  GestureDetector(
+                    onLongPress: _controller.status == NovelChapterStatus.ready
+                        ? _openListeningSheet
                         : null,
-                    icon: Icon(
-                      _ttsState == TtsPlaybackState.speaking
-                          ? Icons.pause_circle_filled
-                          : Icons.headphones,
-                      color: _ttsState == TtsPlaybackState.speaking
-                          ? Theme.of(context).colorScheme.primary
-                          : preset.text,
+                    child: IconButton(
+                      tooltip: _ttsState == TtsPlaybackState.speaking
+                          ? '暂停朗读（长按打开听书面板）'
+                          : (_ttsState == TtsPlaybackState.paused
+                              ? '继续朗读（长按打开听书面板）'
+                              : '朗读（长按打开听书面板）'),
+                      onPressed: _controller.status == NovelChapterStatus.ready
+                          ? _toggleTts
+                          : null,
+                      icon: Icon(
+                        _ttsState == TtsPlaybackState.speaking
+                            ? Icons.pause_circle_filled
+                            : Icons.headphones,
+                        color: _ttsState == TtsPlaybackState.speaking
+                            ? Theme.of(context).colorScheme.primary
+                            : preset.text,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -1474,9 +1488,8 @@ class _ReaderSettingsSheet extends StatelessWidget {
                       spacing: 8,
                       children: [
                         for (final option in const [
-                          ('curl', '卷页'),
                           ('slide', '平移'),
-                          ('none', '无'),
+                          ('none', '无动画'),
                         ])
                           ChoiceChip(
                             label: Text(option.$2),

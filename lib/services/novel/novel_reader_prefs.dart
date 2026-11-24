@@ -169,7 +169,7 @@ class NovelReaderPrefs extends ChangeNotifier {
   String _themeId = 'paper';
   bool _indent = true;
   String _pageMode = 'paged';
-  String _pageAnimation = 'curl';
+  String _pageAnimation = 'slide';
   String _ttsVoiceId = 'xiao_ya';
   String _ttsEnginePackage = '';
   String _ttsEngineVoice = '';
@@ -203,7 +203,12 @@ class NovelReaderPrefs extends ChangeNotifier {
     return _pageMode == 'paged';
   }
 
-  /// 翻页动画：curl / slide / none。
+  /// 翻页动画：slide / none。
+  ///
+  /// 曾经的 'curl'（仿真卷页）已移除：它需要在外层再挂一套拖拽手势，
+  /// 而 PageView 的 Scrollable 会先赢下手势竞技场，导致手指拖不动、
+  /// 页面也不翻。保留一个永远卡死的效果不如不给。旧值 'curl' 读到时会
+  /// 落到默认分支，等价于 'slide'。
   String get pageAnimation {
     _ensureLoaded();
     return _pageAnimation;
