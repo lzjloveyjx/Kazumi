@@ -27,6 +27,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.EventChannel
+import android.media.AudioManager
 import com.ryanheise.audioservice.AudioService
 import com.ryanheise.audioservice.AudioServiceActivity
 
@@ -38,6 +40,40 @@ class MainActivity: AudioServiceActivity() {
     private var pipChannel: MethodChannel? = null
     private var downloadDirectoryChannel: MethodChannel? = null
     private var downloadDirectoryHandler: DownloadDirectoryHandler? = null
+
+    // 小说朗读的设备事件（蓝牙/耳机断开与重连）→ Dart EventChannel。
+    private var ttsDeviceSink: EventChannel.EventSink? = null
+    private var ttsDeviceReceiverRegistered = false
+    private val TTS_DEVICE_CHANNEL = "com.qingshu.app/tts_device"
+
+    private val ttsDeviceReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            when (action) {
+                AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
+                    ttsDeviceSink?.success(mapOf("type" to "noisy"))
+                }
+                Intent.ACTION_HEADSET_PLUG -> {
+                    val state = intent.getIntExtra("state", -1)
+                    // 0 = 拔出, 1 = 插入
+                    if (state == 1) {
+                        ttsDeviceSink?.success(mapOf("type" to "headsetPlug"))
+                    } else if (state == 0) {
+                        ttsDeviceSink?.success(mapOf("type" to "headsetUnplug"))
+                    }
+                }
+                android.bluetooth.BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(
+                        android.bluetooth.BluetoothProfile.EXTRA_STATE, -1)
+                    if (state == android.bluetooth.BluetoothProfile.STATE_CONNECTED) {
+                        ttsDeviceSink?.success(mapOf("type" to "connected"))
+                    } else if (state == android.bluetooth.BluetoothProfile.STATE_DISCONNECTED) {
+                        ttsDeviceSink?.success(mapOf("type" to "noisy"))
+                    }
+                }
+            }
+        }
+    }
 
     private var pipIsPlaying = false
     private var pipDanmakuEnabled = false
@@ -81,6 +117,7 @@ class MainActivity: AudioServiceActivity() {
         downloadDirectoryHandler?.dispose()
         downloadDirectoryHandler = null
         unregisterPipActionReceiverIfNeeded()
+        unregisterTtsDeviceReceiver()
         // audio_service stays bound for the whole activity lifetime, so its
         // own stopSelf() never destroys a service started for playback.
         stopService(Intent(this, AudioService::class.java))
@@ -112,6 +149,17 @@ class MainActivity: AudioServiceActivity() {
             flutterEngine.dartExecutor.binaryMessenger, DownloadDirectoryHandler.CHANNEL
         )
         downloadDirectoryChannel?.setMethodCallHandler(downloadDirectoryHandler)
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, TTS_DEVICE_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    ttsDeviceSink = events
+                    registerTtsDeviceReceiver()
+                }
+                override fun onCancel(arguments: Any?) {
+                    ttsDeviceSink = null
+                    unregisterTtsDeviceReceiver()
+                }
+            })
         intentChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         intentChannel?.setMethodCallHandler { call, result ->
             if (call.method == "openWithMime") {
@@ -178,6 +226,29 @@ class MainActivity: AudioServiceActivity() {
                 result.notImplemented()
             }
         }
+    }
+
+    private fun registerTtsDeviceReceiver() {
+        if (ttsDeviceReceiverRegistered) return
+        val filter = IntentFilter()
+        filter.addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+        filter.addAction(Intent.ACTION_HEADSET_PLUG)
+        filter.addAction(android.bluetooth.BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(ttsDeviceReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(ttsDeviceReceiver, filter)
+        }
+        ttsDeviceReceiverRegistered = true
+    }
+
+    private fun unregisterTtsDeviceReceiver() {
+        if (!ttsDeviceReceiverRegistered) return
+        try {
+            unregisterReceiver(ttsDeviceReceiver)
+        } catch (_: Exception) { }
+        ttsDeviceReceiverRegistered = false
     }
 
     private fun openWithMime(url: String, mimeType: String) {

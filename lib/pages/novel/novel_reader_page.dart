@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_modular/flutter_modular.dart';
@@ -13,6 +15,8 @@ import 'package:kazumi/services/novel/novel_paginator.dart';
 import 'package:kazumi/services/novel/novel_tts_controller.dart';
 import 'package:kazumi/services/novel/novel_tts_player.dart';
 import 'package:kazumi/services/novel/novel_reader_prefs.dart';
+import 'package:kazumi/services/novel/tts_audio_bridge.dart';
+import 'package:kazumi/services/player/audio_controller.dart';
 
 /// 小说阅读页。
 ///
@@ -90,6 +94,9 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   /// 朗读控制器。
   late final NovelTtsPlayer _tts;
 
+  /// 朗读的音频生命周期桥接（通知栏控件 + 来电/蓝牙自动暂停恢复）。
+  late final TtsAudioBridge _ttsBridge;
+
   /// 朗读状态（用于刷新按钮与高亮）。
   TtsPlaybackState _ttsState = TtsPlaybackState.idle;
 
@@ -133,6 +140,13 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       ..onStateChanged = _onTtsStateChanged
       ..onSentenceChanged = _onTtsSentenceChanged
       ..onNotice = _onTtsNotice;
+    _ttsBridge = TtsAudioBridge(
+      audioController: inject<AudioController>(),
+      onPause: () => _tts.pause(),
+      onResume: () => _tts.resume(),
+      onPrevious: () => _tts.skip(-1),
+      onNext: () => _tts.skip(1),
+    );
 
     if (_roadIndex < 0 || _roadIndex >= widget.roads.length) _roadIndex = 0;
     if (_chapterIndex < 0 || _chapterIndex >= _urls.length) _chapterIndex = 0;
@@ -153,6 +167,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
         overlays: SystemUiOverlay.values);
     _controller.removeListener(_onControllerChanged);
     _controller.dispose();
+    unawaited(_ttsBridge.stop());
     _tts.dispose();
     _scroll.dispose();
     _pageController?.dispose();
@@ -298,6 +313,12 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   void _onTtsStateChanged(TtsPlaybackState state) {
     if (!mounted) return;
     setState(() => _ttsState = state);
+    // 通知栏媒体卡片跟着朗读状态走（audio_session 靠它判断来电/断开要不要暂停）。
+    unawaited(_ttsBridge.sync(
+      bookTitle: widget.bookTitle,
+      chapterTitle: _titleAt(_chapterIndex),
+      playing: state == TtsPlaybackState.speaking,
+    ));
     // 读完最后一句且开了自动续读，跳到下一章继续。
     if (state == TtsPlaybackState.idle &&
         _tts.atEnd &&
@@ -398,6 +419,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     // 直接走系统朗读（MultiTTS 等第三方引擎）。
     // 不再询问解压内置神经模型——用户走系统通道，用不到它。
     _tts.useSystem();
+    await _ttsBridge.start();
     await _tts.play();
   }
 
@@ -471,6 +493,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       voice: _prefs.ttsEngineVoice,
     );
     _tts.useSystem();
+    await _ttsBridge.start();
     await _tts.play();
   }
 
@@ -898,24 +921,15 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     }
     _pageController ??= PageController(initialPage: _pageIndex);
 
+    // 卷页动画必须「叠在」承载手势的 PageView 上面，不能替换掉它：
+    // 之前 _curl != null 时直接 return NovelPageCurl，GestureDetector 连同
+    // 它的 HorizontalDragRecognizer 一起被移出 widget 树，drag 回调再也不
+    // 触发，手指就跟丢了 —— 表现就是「卷页效果下根本翻不了页」。
+    // 现在手势层始终在场，动画只是最上面一层只读的视觉覆盖。
     final curl = _curl;
-    if (curl != null && _prefs.pageAnimation == 'curl') {
-      // 卷页进行中：叠一层动画
-      final forward = curl.forward;
-      final outgoingIndex = forward ? _pageIndex : _pageIndex;
-      final incomingIndex = forward
-          ? (_pageIndex + 1).clamp(0, _pages.length - 1)
-          : (_pageIndex - 1).clamp(0, _pages.length - 1);
-      return NovelPageCurl(
-        progress: curl.progress,
-        forward: forward,
-        backgroundColor: preset.background,
-        outgoing: _pageContent(outgoingIndex, height),
-        incoming: _pageContent(incomingIndex, height),
-      );
-    }
+    final bool curling = curl != null && _prefs.pageAnimation == 'curl';
 
-    return GestureDetector(
+    Widget gestureLayer = GestureDetector(
       // 水平拖动驱动卷页；短距离拖动仍然交给点击热区处理。
       onHorizontalDragStart: _prefs.pageAnimation == 'curl'
           ? (details) {
@@ -931,7 +945,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                       _chapterIndex + 1 < _urls.length)
                   : (_pageIndex > 0 || _chapterIndex > 0);
               if (!canTurn) {
-                setState(() => _curl = null);
+                if (_curl != null) setState(() => _curl = null);
                 return;
               }
               final progress = (dx.abs() / width).clamp(0.0, 1.0);
@@ -940,21 +954,21 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
           : null,
       onHorizontalDragEnd: _prefs.pageAnimation == 'curl'
           ? (details) {
-              final curl = _curl;
-              if (curl == null) return;
-              // 拖过 30% 或快速甩动就完成翻页
+              final activeCurl = _curl;
+              if (activeCurl == null) return;
               final velocity = details.velocity.pixelsPerSecond.dx;
-              final flung = curl.forward ? velocity < -300 : velocity > 300;
-              if (curl.progress > 0.3 || flung) {
-                setState(() => _curl = null);
-                if (curl.forward) {
+              final flung =
+                  activeCurl.forward ? velocity < -300 : velocity > 300;
+              final committed = activeCurl.progress > 0.3 || flung;
+              setState(() => _curl = null);
+              // 先把底层 PageView 翻过去，再让覆盖层消失，避免动画结束瞬间
+              // 露出还没翻的旧页、看起来像「弹回去」。
+              if (committed) {
+                if (activeCurl.forward) {
                   _next();
                 } else {
                   _previous();
                 }
-              } else {
-                // 没翻过去：回弹
-                setState(() => _curl = null);
               }
             }
           : null,
@@ -964,7 +978,6 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
         onPointerUp: _onPointerUp,
         child: PageView.builder(
           controller: _pageController,
-          // 卷页模式下禁用 PageView 自带的滑动，避免两套动画打架
           physics: _prefs.pageAnimation == 'curl'
               ? const NeverScrollableScrollPhysics()
               : null,
@@ -976,6 +989,32 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
           itemBuilder: (context, index) => _pageContent(index, height),
         ),
       ),
+    );
+
+    if (!curling) return gestureLayer;
+
+    // 只读覆盖层：IgnorePointer 保证它不吃掉任何手势。
+    final forward = curl.forward;
+    final outgoingIndex = _pageIndex;
+    final incomingIndex = forward
+        ? (_pageIndex + 1).clamp(0, _pages.length - 1)
+        : (_pageIndex - 1).clamp(0, _pages.length - 1);
+    return Stack(
+      children: [
+        gestureLayer,
+        Positioned.fill(
+          child: IgnorePointer(
+            ignoring: true,
+            child: NovelPageCurl(
+              progress: curl.progress,
+              forward: forward,
+              backgroundColor: preset.background,
+              outgoing: _pageContent(outgoingIndex, height),
+              incoming: _pageContent(incomingIndex, height),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1415,351 +1454,3 @@ class _ReaderSettingsSheet extends StatelessWidget {
                               icon: Icon(Icons.auto_stories, size: 18),
                             ),
                             ButtonSegment(
-                              value: false,
-                              label: Text('滚动'),
-                              icon: Icon(Icons.swap_vert, size: 18),
-                            ),
-                          ],
-                          selected: {prefs.pagedMode},
-                          onSelectionChanged: (value) =>
-                              prefs.setPagedMode(value.first),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  _LabeledRow(
-                    preset: preset,
-                    label: '翻页动画',
-                    child: Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final option in const [
-                          ('curl', '卷页'),
-                          ('slide', '平移'),
-                          ('none', '无'),
-                        ])
-                          ChoiceChip(
-                            label: Text(option.$2),
-                            selected: prefs.pageAnimation == option.$1,
-                            onSelected: (_) =>
-                                prefs.setPageAnimation(option.$1),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _StepperRow(
-                    preset: preset,
-                    label: '字号',
-                    value: prefs.fontSize.round().toString(),
-                    onMinus: () => prefs.setFontSize(prefs.fontSize - 1),
-                    onPlus: () => prefs.setFontSize(prefs.fontSize + 1),
-                  ),
-                  _SliderRow(
-                    preset: preset,
-                    label: '行距',
-                    value: prefs.lineHeight,
-                    min: 1.2,
-                    max: 2.6,
-                    divisions: 14,
-                    display: prefs.lineHeight.toStringAsFixed(1),
-                    onChanged: prefs.setLineHeight,
-                  ),
-                  _SliderRow(
-                    preset: preset,
-                    label: '边距',
-                    value: prefs.margin,
-                    min: 0,
-                    max: 48,
-                    divisions: 24,
-                    display: prefs.margin.round().toString(),
-                    onChanged: prefs.setMargin,
-                  ),
-                  const SizedBox(height: 8),
-                  _LabeledRow(
-                    preset: preset,
-                    label: '字体',
-                    child: Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final option in NovelFontFamilyOption.values)
-                          ChoiceChip(
-                            label: Text(option.label),
-                            selected: prefs.fontFamily.id == option.id,
-                            onSelected: (_) => prefs.setFontFamily(option.id),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _LabeledRow(
-                    preset: preset,
-                    label: '背景',
-                    child: Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        for (final option in NovelThemePreset.values)
-                          _ThemeSwatch(
-                            preset: option,
-                            selected: preset.id == option.id,
-                            onTap: () => prefs.setTheme(option.id),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: prefs.indent,
-                    onChanged: prefs.setIndent,
-                    title: Text(
-                      '首行缩进',
-                      style: prefs.captionStyle.copyWith(
-                        fontSize: 14,
-                        color: preset.text,
-                      ),
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  Text(
-                    '朗读',
-                    style: TextStyle(fontSize: 14, color: preset.secondary),
-                  ),
-                  const SizedBox(height: 4),
-                  const SizedBox(height: 8),
-                  _LabeledRow(
-                    preset: preset,
-                    label: '系统朗读引擎',
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        onOpenEngineSheet();
-                      },
-                      icon: const Icon(Icons.settings_voice, size: 18),
-                      label: Text(
-                        prefs.ttsEnginePackage.isEmpty
-                            ? '系统默认'
-                            : prefs.ttsEnginePackage,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ),
-                  _SliderRow(
-                    preset: preset,
-                    label: '语速',
-                    value: prefs.ttsRate,
-                    min: 0.2,
-                    max: 1.0,
-                    divisions: 16,
-                    display: prefs.ttsRate.toStringAsFixed(1),
-                    onChanged: prefs.setTtsRate,
-                  ),
-                  _SliderRow(
-                    preset: preset,
-                    label: '音调',
-                    value: prefs.ttsPitch,
-                    min: 0.5,
-                    max: 2.0,
-                    divisions: 15,
-                    display: prefs.ttsPitch.toStringAsFixed(1),
-                    onChanged: prefs.setTtsPitch,
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: prefs.ttsAutoNext,
-                    onChanged: prefs.setTtsAutoNext,
-                    title: Text(
-                      '读完自动下一章',
-                      style: prefs.captionStyle.copyWith(
-                        fontSize: 14,
-                        color: preset.text,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _StepperRow extends StatelessWidget {
-  const _StepperRow({
-    required this.preset,
-    required this.label,
-    required this.value,
-    required this.onMinus,
-    required this.onPlus,
-  });
-
-  final NovelThemePreset preset;
-  final String label;
-  final String value;
-  final VoidCallback onMinus;
-  final VoidCallback onPlus;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 56,
-          child: Text(
-            label,
-            style: TextStyle(fontSize: 14, color: preset.secondary),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 15,
-              color: preset.text,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        IconButton(
-          onPressed: onMinus,
-          icon: Icon(Icons.remove_circle_outline, color: preset.text),
-        ),
-        IconButton(
-          onPressed: onPlus,
-          icon: Icon(Icons.add_circle_outline, color: preset.text),
-        ),
-      ],
-    );
-  }
-}
-
-class _SliderRow extends StatelessWidget {
-  const _SliderRow({
-    required this.preset,
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.divisions,
-    required this.display,
-    required this.onChanged,
-  });
-
-  final NovelThemePreset preset;
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final int divisions;
-  final String display;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 56,
-          child: Text(
-            label,
-            style: TextStyle(fontSize: 14, color: preset.secondary),
-          ),
-        ),
-        Expanded(
-          child: Slider(
-            value: value,
-            min: min,
-            max: max,
-            divisions: divisions,
-            onChanged: onChanged,
-          ),
-        ),
-        SizedBox(
-          width: 40,
-          child: Text(
-            display,
-            textAlign: TextAlign.right,
-            style: TextStyle(fontSize: 14, color: preset.text),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _LabeledRow extends StatelessWidget {
-  const _LabeledRow({
-    required this.preset,
-    required this.label,
-    required this.child,
-  });
-
-  final NovelThemePreset preset;
-  final String label;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(fontSize: 14, color: preset.secondary)),
-        const SizedBox(height: 8),
-        child,
-      ],
-    );
-  }
-}
-
-class _ThemeSwatch extends StatelessWidget {
-  const _ThemeSwatch({
-    required this.preset,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final NovelThemePreset preset;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: preset.background,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: selected
-                    ? Theme.of(context).colorScheme.primary
-                    : preset.secondary.withValues(alpha: 0.35),
-                width: selected ? 2.5 : 1,
-              ),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              '文',
-              style: TextStyle(color: preset.text, fontSize: 15),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            preset.label,
-            style: TextStyle(fontSize: 11, color: preset.secondary),
-          ),
-        ],
-      ),
-    );
-  }
-}
