@@ -1454,3 +1454,351 @@ class _ReaderSettingsSheet extends StatelessWidget {
                               icon: Icon(Icons.auto_stories, size: 18),
                             ),
                             ButtonSegment(
+                              value: false,
+                              label: Text('滚动'),
+                              icon: Icon(Icons.swap_vert, size: 18),
+                            ),
+                          ],
+                          selected: {prefs.pagedMode},
+                          onSelectionChanged: (value) =>
+                              prefs.setPagedMode(value.first),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _LabeledRow(
+                    preset: preset,
+                    label: '翻页动画',
+                    child: Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final option in const [
+                          ('curl', '卷页'),
+                          ('slide', '平移'),
+                          ('none', '无'),
+                        ])
+                          ChoiceChip(
+                            label: Text(option.$2),
+                            selected: prefs.pageAnimation == option.$1,
+                            onSelected: (_) =>
+                                prefs.setPageAnimation(option.$1),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _StepperRow(
+                    preset: preset,
+                    label: '字号',
+                    value: prefs.fontSize.round().toString(),
+                    onMinus: () => prefs.setFontSize(prefs.fontSize - 1),
+                    onPlus: () => prefs.setFontSize(prefs.fontSize + 1),
+                  ),
+                  _SliderRow(
+                    preset: preset,
+                    label: '行距',
+                    value: prefs.lineHeight,
+                    min: 1.2,
+                    max: 2.6,
+                    divisions: 14,
+                    display: prefs.lineHeight.toStringAsFixed(1),
+                    onChanged: prefs.setLineHeight,
+                  ),
+                  _SliderRow(
+                    preset: preset,
+                    label: '边距',
+                    value: prefs.margin,
+                    min: 0,
+                    max: 48,
+                    divisions: 24,
+                    display: prefs.margin.round().toString(),
+                    onChanged: prefs.setMargin,
+                  ),
+                  const SizedBox(height: 8),
+                  _LabeledRow(
+                    preset: preset,
+                    label: '字体',
+                    child: Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final option in NovelFontFamilyOption.values)
+                          ChoiceChip(
+                            label: Text(option.label),
+                            selected: prefs.fontFamily.id == option.id,
+                            onSelected: (_) => prefs.setFontFamily(option.id),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _LabeledRow(
+                    preset: preset,
+                    label: '背景',
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final option in NovelThemePreset.values)
+                          _ThemeSwatch(
+                            preset: option,
+                            selected: preset.id == option.id,
+                            onTap: () => prefs.setTheme(option.id),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: prefs.indent,
+                    onChanged: prefs.setIndent,
+                    title: Text(
+                      '首行缩进',
+                      style: prefs.captionStyle.copyWith(
+                        fontSize: 14,
+                        color: preset.text,
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  Text(
+                    '朗读',
+                    style: TextStyle(fontSize: 14, color: preset.secondary),
+                  ),
+                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
+                  _LabeledRow(
+                    preset: preset,
+                    label: '系统朗读引擎',
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        onOpenEngineSheet();
+                      },
+                      icon: const Icon(Icons.settings_voice, size: 18),
+                      label: Text(
+                        prefs.ttsEnginePackage.isEmpty
+                            ? '系统默认'
+                            : prefs.ttsEnginePackage,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
+                  _SliderRow(
+                    preset: preset,
+                    label: '语速',
+                    value: prefs.ttsRate,
+                    min: 0.2,
+                    max: 1.0,
+                    divisions: 16,
+                    display: prefs.ttsRate.toStringAsFixed(1),
+                    onChanged: prefs.setTtsRate,
+                  ),
+                  _SliderRow(
+                    preset: preset,
+                    label: '音调',
+                    value: prefs.ttsPitch,
+                    min: 0.5,
+                    max: 2.0,
+                    divisions: 15,
+                    display: prefs.ttsPitch.toStringAsFixed(1),
+                    onChanged: prefs.setTtsPitch,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: prefs.ttsAutoNext,
+                    onChanged: prefs.setTtsAutoNext,
+                    title: Text(
+                      '读完自动下一章',
+                      style: prefs.captionStyle.copyWith(
+                        fontSize: 14,
+                        color: preset.text,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _StepperRow extends StatelessWidget {
+  const _StepperRow({
+    required this.preset,
+    required this.label,
+    required this.value,
+    required this.onMinus,
+    required this.onPlus,
+  });
+
+  final NovelThemePreset preset;
+  final String label;
+  final String value;
+  final VoidCallback onMinus;
+  final VoidCallback onPlus;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 56,
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 14, color: preset.secondary),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 15,
+              color: preset.text,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        IconButton(
+          onPressed: onMinus,
+          icon: Icon(Icons.remove_circle_outline, color: preset.text),
+        ),
+        IconButton(
+          onPressed: onPlus,
+          icon: Icon(Icons.add_circle_outline, color: preset.text),
+        ),
+      ],
+    );
+  }
+}
+
+class _SliderRow extends StatelessWidget {
+  const _SliderRow({
+    required this.preset,
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.display,
+    required this.onChanged,
+  });
+
+  final NovelThemePreset preset;
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final String display;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 56,
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 14, color: preset.secondary),
+          ),
+        ),
+        Expanded(
+          child: Slider(
+            value: value,
+            min: min,
+            max: max,
+            divisions: divisions,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(
+          width: 40,
+          child: Text(
+            display,
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 14, color: preset.text),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LabeledRow extends StatelessWidget {
+  const _LabeledRow({
+    required this.preset,
+    required this.label,
+    required this.child,
+  });
+
+  final NovelThemePreset preset;
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 14, color: preset.secondary)),
+        const SizedBox(height: 8),
+        child,
+      ],
+    );
+  }
+}
+
+class _ThemeSwatch extends StatelessWidget {
+  const _ThemeSwatch({
+    required this.preset,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final NovelThemePreset preset;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: preset.background,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: selected
+                    ? Theme.of(context).colorScheme.primary
+                    : preset.secondary.withValues(alpha: 0.35),
+                width: selected ? 2.5 : 1,
+              ),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              '文',
+              style: TextStyle(color: preset.text, fontSize: 15),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            preset.label,
+            style: TextStyle(fontSize: 11, color: preset.secondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
