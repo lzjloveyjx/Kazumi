@@ -53,11 +53,33 @@ android {
         versionName flutterVersionName
     }
 
+    // 固定签名：自更新要求每个版本签名一致。
+    //
+    // 为什么必须固定：GitHub Actions 的 Linux runner 上没有
+    // ~/.android/debug.keystore，Flutter 每次构建都会现场生成一个**随机**的
+    // debug keystore，于是每个版本的签名都不同 —— 应用内更新会报
+    // 「签名不一致」，只能卸载重装。这不是偶发问题，是每次发包都会重现。
+    //
+    // 做法：仓库里带一份固定的 keystore，CI 和本地都用它签。
+    // 自用项目，密钥随仓库走；真要发布到应用商店时再换成独立保管的密钥。
+    signingConfigs {
+        release {
+            def ksFile = file('qingshu-release.keystore')
+            if (ksFile.exists()) {
+                storeFile ksFile
+                storePassword 'qingshu2024'
+                keyAlias 'qingshu'
+                keyPassword 'qingshu2024'
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig signingConfigs.debug
+            // keystore 在就用固定签名，不在就退回 debug（本地无密钥时仍能跑）。
+            signingConfig file('qingshu-release.keystore').exists()
+                ? signingConfigs.release
+                : signingConfigs.debug
         }
     }
 
